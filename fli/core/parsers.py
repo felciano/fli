@@ -53,11 +53,14 @@ def resolve_enum(enum_cls: type[T], name: str) -> T:
         ) from e
 
 
-def resolve_airport(code: str) -> Airport:
+def resolve_airport(code: str, *, label: str | None = None) -> Airport:
     """Resolve an airport code to an Airport enum.
 
     Args:
         code: IATA airport code (e.g., 'JFK', 'LHR')
+        label: Optional slot name ('origin', 'destination', 'layover') woven
+            into the error so a bad code in a multi-slot command says which
+            slot was at fault.
 
     Returns:
         The corresponding Airport enum member
@@ -69,10 +72,11 @@ def resolve_airport(code: str) -> Airport:
     try:
         return getattr(Airport, code.upper())
     except AttributeError as e:
-        raise ParseError(f"Invalid airport code: '{code}'") from e
+        slot = f"{label} " if label else ""
+        raise ParseError(f"Invalid {slot}airport code: '{code}'") from e
 
 
-def resolve_airports(codes: str) -> list[Airport]:
+def resolve_airports(codes: str, *, label: str | None = None) -> list[Airport]:
     """Resolve one or more comma-separated airport codes.
 
     Used wherever a single origin/destination slot may name several airports
@@ -82,6 +86,8 @@ def resolve_airports(codes: str) -> list[Airport]:
     Args:
         codes: One or more IATA codes, comma-separated (e.g. 'JFK' or 'JFK, LGA').
             Surrounding whitespace is stripped and blank tokens are dropped.
+        label: Optional slot name ('origin', 'destination', 'layover') woven
+            into the error so the user learns which slot was at fault.
 
     Returns:
         The resolved airports, in the order given. Duplicates are preserved.
@@ -91,9 +97,12 @@ def resolve_airports(codes: str) -> list[Airport]:
             tokens remain (e.g. '' or ',,,').
 
     """
-    airports = [resolve_airport(code.strip()) for code in codes.split(",") if code.strip()]
+    airports = [
+        resolve_airport(code.strip(), label=label) for code in codes.split(",") if code.strip()
+    ]
     if not airports:
-        raise ParseError(f"No valid airport codes found in: '{codes}'")
+        slot = f"{label} " if label else ""
+        raise ParseError(f"No valid {slot}airport codes found in: '{codes}'")
     return airports
 
 

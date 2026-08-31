@@ -152,3 +152,20 @@ class TestResolveAirports:
         with pytest.raises(ParseError) as exc:
             resolve_airports("JFK,XXX")
         assert "'XXX'" in str(exc.value)
+
+
+class TestAirportErrorLabels:
+    """The error should name which slot was at fault, not just the bad code."""
+
+    def test_unlabelled_error_keeps_the_bare_message(self):
+        with pytest.raises(ParseError, match=r"^Invalid airport code: 'XXX'$"):
+            resolve_airports("XXX")
+
+    def test_labelled_error_names_the_slot(self):
+        with pytest.raises(ParseError, match=r"^Invalid origin airport code: 'XXX'$"):
+            resolve_airports("JFK,XXX", label="origin")
+
+    def test_labelled_empty_error_names_the_slot(self):
+        message = r"^No valid destination airport codes found in: ',,'$"
+        with pytest.raises(ParseError, match=message):
+            resolve_airports(",,", label="destination")

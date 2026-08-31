@@ -429,5 +429,5 @@ def test_dates_blank_origin_reports_parse_error(runner, mock_search_dates, mock_
     mock_search_dates.search.return_value = _one_date_result()
     result = runner.invoke(app, ["dates", ",", "LAX"])
     assert result.exit_code == 1
-    assert "No valid airport codes" in result.stdout
+    assert "No valid origin airport codes" in result.stdout
     assert "Traceback" not in result.stdout

@@ -320,8 +320,8 @@ def dates(
         # Parse parameters using shared utilities.
         # A single origin/destination slot may name several airports
         # (e.g. "JFK,LGA"), matching what the MCP tools already accept.
-        origin_airports = resolve_airports(origin)
-        destination_airports = resolve_airports(destination)
+        origin_airports = resolve_airports(origin, label="origin")
+        destination_airports = resolve_airports(destination, label="destination")
         trip_type = TripType.ROUND_TRIP if is_round_trip else TripType.ONE_WAY
         stops = parse_max_stops(max_stops)
         seat_type = parse_cabin_class(cabin_class)

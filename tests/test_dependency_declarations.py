@@ -16,7 +16,13 @@ from pathlib import Path
 
 import pytest
 
-tomllib = pytest.importorskip("tomllib", reason="tomllib is stdlib only on Python 3.11+")
+if sys.version_info >= (3, 11):  # pragma: no cover - version-dependent import
+    import tomllib
+else:  # pragma: no cover - version-dependent import
+    tomllib = pytest.importorskip(
+        "tomli",
+        reason="Python 3.10 needs the tomli backport; it is declared in the dev extra",
+    )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = PROJECT_ROOT / "pyproject.toml"
@@ -80,6 +86,20 @@ def _declared_names(*requirement_lists: list[str]) -> set[str]:
             if name:
                 names.add(name)
     return names
+
+
+def _runtime_declared_names() -> set[str]:
+    """Collect only the unconditional runtime dependencies.
+
+    Deliberately excludes every extra. A package declared solely in ``dev`` (or
+    any other extra) must not make a runtime import under ``fli/`` look
+    satisfied — that is the blind spot this module exists to close.
+
+    Returns:
+        The set of normalized names in ``[project.dependencies]``.
+
+    """
+    return _declared_names(_load_pyproject()["project"].get("dependencies", []))
 
 
 def _all_declared_names() -> set[str]:
@@ -175,3 +195,57 @@ def test_rich_and_mcp_are_declared_directly():
 
     assert "rich" in runtime, "fli/cli imports rich; declare it in [project].dependencies"
     assert "mcp" in mcp_extra, "fli/mcp/server.py imports mcp.types; declare it in the mcp extra"
+
+
+def test_dev_only_declarations_do_not_satisfy_runtime_imports():
+    """A package declared only in ``dev`` must not count as declared for ``fli/``.
+
+    ``_all_declared_names`` used to union every requirement list, so a runtime
+    import satisfied by a dev-only package looked fine — exactly the blind spot
+    that lets the ``ModuleNotFoundError`` class recur.
+    """
+    project = _load_pyproject()["project"]
+    extras = project.get("optional-dependencies", {})
+    dev_only = _declared_names(extras.get("dev", [])) - _runtime_declared_names()
+    assert dev_only, "expected at least one dev-only package to make this test meaningful"
+    assert not (dev_only & _runtime_declared_names())
+
+
+def test_core_imports_are_declared_in_runtime_dependencies():
+    """Modules imported outside ``fli/mcp/`` must be runtime dependencies."""
+    runtime = _runtime_declared_names()
+    undeclared: dict[str, set[str]] = {}
+    for module, files in _third_party_modules().items():
+        core_files = {f for f in files if not f.startswith("fli/mcp/")}
+        if core_files and not (_distributions_for(module) & runtime):
+            undeclared[module] = core_files
+
+    assert not undeclared, (
+        "Imported outside fli/mcp/ but not in [project.dependencies]:\n"
+        + "\n".join(
+            f"  {module}: imported by {', '.join(sorted(files))}"
+            for module, files in sorted(undeclared.items())
+        )
+    )
+
+
+def test_mcp_only_imports_are_declared_in_runtime_or_the_mcp_extra():
+    """Modules imported only under ``fli/mcp/`` may live in the ``mcp`` extra."""
+    project = _load_pyproject()["project"]
+    allowed = _runtime_declared_names() | _declared_names(
+        project.get("optional-dependencies", {}).get("mcp", [])
+    )
+    undeclared: dict[str, set[str]] = {}
+    for module, files in _third_party_modules().items():
+        if all(f.startswith("fli/mcp/") for f in files) and not (
+            _distributions_for(module) & allowed
+        ):
+            undeclared[module] = files
+
+    assert not undeclared, (
+        "Imported under fli/mcp/ but declared in neither dependencies nor the mcp extra:\n"
+        + "\n".join(
+            f"  {module}: imported by {', '.join(sorted(files))}"
+            for module, files in sorted(undeclared.items())
+        )
+    )

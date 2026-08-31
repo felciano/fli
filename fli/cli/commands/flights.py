@@ -97,8 +97,8 @@ def _search_flights_core(
         # Parse parameters using shared utilities.
         # A single origin/destination slot may name several airports
         # (e.g. "JFK,LGA"), matching what the MCP tools already accept.
-        origin_airports = resolve_airports(origin)
-        destination_airports = resolve_airports(destination)
+        origin_airports = resolve_airports(origin, label="origin")
+        destination_airports = resolve_airports(destination, label="destination")
         # Echo canonical codes rather than the raw user text now that they parsed.
         query["origin"] = ",".join(a.name.lstrip("_") for a in origin_airports)
         query["destination"] = ",".join(a.name.lstrip("_") for a in destination_airports)
@@ -159,7 +159,9 @@ def _search_flights_core(
         # Parse layover constraints (airports, min duration, max duration).
         layover_restrictions = None
         layover_airports = (
-            [airport for code in layover for airport in resolve_airports(code)] if layover else None
+            [airport for code in layover for airport in resolve_airports(code, label="layover")]
+            if layover
+            else None
         )
         if layover_airports or min_layover is not None or max_layover is not None:
             layover_restrictions = LayoverRestrictions(
@@ -392,7 +394,7 @@ def flights(
         typer.Option(
             "--layover",
             "-l",
-            help="Restrict layover to these airports (e.g., -l ORD -l MDW)",
+            help="Restrict layover to these airports (e.g., -l ORD -l MDW, or -l ORD,MDW)",
         ),
     ] = None,
     emissions: Annotated[

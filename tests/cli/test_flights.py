@@ -534,7 +534,7 @@ def test_flights_blank_origin_reports_parse_error(runner, mock_search_flights, m
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["error"]["type"] == "validation_error"
-    assert "No valid airport codes" in payload["error"]["message"]
+    assert "No valid origin airport codes" in payload["error"]["message"]
     assert "log_path" not in payload["error"]
 
 

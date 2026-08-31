@@ -55,6 +55,9 @@ dev = [
     "pytest-xdist>=3.6.1",
     "pytest-cov>=6.0.0",
     "ruff>=0.8.4",
+    # Needed only so tests/test_dependency_declarations.py can parse this file
+    # on Python 3.10, where tomllib is not yet in the stdlib.
+    "tomli>=2.0.0; python_version < '3.11'",
     "twine>=6.0.0",
 ]
 
