@@ -157,7 +157,6 @@ def main() -> int:
             url=url,
             data=f"f.req={encoded}",
             impersonate="chrome",
-            allow_redirects=True,
         )
         path = out_dir / f"{name}.bin"
         path.write_bytes(r.content)

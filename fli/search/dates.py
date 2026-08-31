@@ -228,7 +228,7 @@ class SearchDates:
 
         url = page_url(build_tfs(filters, travel_dates=travel_dates), currency, language, country)
         try:
-            response = self.client.get(url, impersonate="chrome", allow_redirects=True)
+            response = self.client.get(url, impersonate="chrome")
             response.raise_for_status()
             payload = extract_payload(response.text)
         except Exception:  # noqa: BLE001 — one bad date must not sink the sweep

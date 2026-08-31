@@ -72,6 +72,17 @@ if _env_timeout is not None:
 else:
     REQUEST_TIMEOUT = DEFAULT_TIMEOUT
 
+# Redirect policy. GHSA-qw2m-4pqf-rmpp (CVE-2026-33752) covers curl-cffi's
+# unconditional following of redirects into private/internal address space.
+# curl-cffi >= 0.15.0 added ``CurlFollow.SAFE``, reachable from the requests
+# layer as ``allow_redirects="safe"``: redirects are still followed, but a hop
+# to a private/loopback/link-local IP is rejected by libcurl. The remediation
+# is opt-in — plain ``True`` still follows those hops on every released
+# version — so the value has to be passed, not just the floor raised. Setting
+# it here rather than at each call site means new call sites inherit it and
+# cannot silently regress.
+SAFE_REDIRECTS = "safe"
+
 # EU/EEA IPs are redirected to Google's consent interstitial, which serves a
 # page with no ds:1 payload — every search then fails to parse. A pre-accepted
 # SOCS cookie skips the interstitial (the legacy CONSENT cookie no longer
@@ -139,6 +150,7 @@ class Client:
         """Make a rate-limited GET request with automatic retries."""
         self._rate_limiter.acquire()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        kwargs.setdefault("allow_redirects", SAFE_REDIRECTS)
         try:
             response = self._session().get(url, **kwargs)
             response.raise_for_status()
@@ -151,6 +163,7 @@ class Client:
         """Make a rate-limited POST request with automatic retries."""
         self._rate_limiter.acquire()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        kwargs.setdefault("allow_redirects", SAFE_REDIRECTS)
         try:
             response = self._session().post(url, **kwargs)
             response.raise_for_status()

@@ -196,7 +196,7 @@ class SearchFlights:
             )
 
         url = page_url(build_tfs(filters), currency, language, country)
-        response = self.client.get(url, impersonate="chrome", allow_redirects=True)
+        response = self.client.get(url, impersonate="chrome")
         response.raise_for_status()
 
         inner = extract_payload(response.text)
@@ -365,7 +365,6 @@ class SearchFlights:
             url=url,
             data=f"f.req={encoded}",
             impersonate="chrome",
-            allow_redirects=True,
         )
         response.raise_for_status()
 
