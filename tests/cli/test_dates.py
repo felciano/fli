@@ -294,6 +294,29 @@ def test_dates_json_invalid_date(runner, mock_search_dates, mock_console):
     assert payload["error"]["message"] == "Date must be in YYYY-MM-DD format"
 
 
+def test_dates_json_error_query_echoes_passengers(runner, mock_search_dates, mock_console):
+    """Error-path JSON keeps the same query shape as the success path."""
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--from",
+            "2024-13-45",
+            "--passengers",
+            "2",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert payload["query"]["passengers"] == 2
+
+
 def test_dates_json_empty_results(runner, mock_search_dates, mock_console):
     """Test dates JSON output when no results are found."""
     mock_search_dates.search.return_value = []

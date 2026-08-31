@@ -467,6 +467,7 @@ def dates(
                                 sunday=sunday,
                             )
                         ],
+                        "passengers": passengers,
                     },
                 )
             )
@@ -522,6 +523,7 @@ def dates(
                                 sunday=sunday,
                             )
                         ],
+                        "passengers": passengers,
                     },
                 )
             )
