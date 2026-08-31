@@ -120,6 +120,8 @@ Search for flights on a specific date.
 - `min_layover` / `max_layover` - Layover duration bounds in minutes
 - `currency` / `language` / `country` - Google `curr=` / `hl=` / `gl=` URL params
 - `sort_by` - CHEAPEST, DURATION, DEPARTURE_TIME, ARRIVAL_TIME
+- `passengers` / `children` / `infants_in_seat` / `infants_on_lap` - Passenger
+  counts by fare category (adults default 1, the rest default 0)
 
 **Response:** Each flight in `flights[]` carries its own `booking_url` — a
 `tfs` protobuf deep link that opens the specific itinerary's booking page
@@ -138,6 +140,7 @@ Find cheapest travel dates within a range.
 - `trip_duration` - Number of days for round trips
 - `is_round_trip` - Boolean for round-trip search
 - `cabin_class`, `max_stops`, `departure_window`, `airlines` - Same as above
+- `passengers`, `children`, `infants_in_seat`, `infants_on_lap` - Same as above
 - `exclude_airlines`, `alliance`, `exclude_alliance`, `min_layover`, `max_layover` - Same as `search_flights`
 - `currency`, `language`, `country` - Same locale knobs as `search_flights`
 - `sort_by_price` - Boolean to sort by price

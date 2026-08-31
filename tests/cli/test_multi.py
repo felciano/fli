@@ -149,6 +149,37 @@ class TestMultiCityCommand:
         args, _ = mock_search_flights.search.call_args
         assert args[0].passenger_info.adults == 2
 
+    def test_with_children_and_infants(self, runner, mock_search_flights, mock_console):
+        """Child and infant counts reach PassengerInfo on multi-city filters."""
+        date1 = _future_date(30)
+        date2 = _future_date(37)
+
+        result = runner.invoke(
+            app,
+            [
+                "multi",
+                "--leg",
+                f"SEA,HKG,{date1}",
+                "--leg",
+                f"HKG,SEA,{date2}",
+                "--passengers",
+                "2",
+                "--children",
+                "1",
+                "--infants-in-seat",
+                "1",
+                "--infants-on-lap",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0
+        args, _ = mock_search_flights.search.call_args
+        passenger_info = args[0].passenger_info
+        assert passenger_info.adults == 2
+        assert passenger_info.children == 1
+        assert passenger_info.infants_in_seat == 1
+        assert passenger_info.infants_on_lap == 2
+
     def test_with_cabin_class(self, runner, mock_search_flights, mock_console):
         """Test multi-city search with cabin class filter."""
         date1 = _future_date(30)

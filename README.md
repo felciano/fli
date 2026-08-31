@@ -75,6 +75,9 @@ The MCP server provides two main tools:
 | `country`           | string | ISO 3166-1 alpha-2 country code (e.g. 'GB') for `gl=` param |
 | `sort_by`           | string | CHEAPEST, DURATION, DEPARTURE_TIME, or ARRIVAL_TIME         |
 | `passengers`        | int    | Number of adult passengers                                  |
+| `children`          | int    | Number of children (aged 2-11)                              |
+| `infants_in_seat`   | int    | Number of infants occupying their own seat                  |
+| `infants_on_lap`    | int    | Number of infants travelling on an adult's lap              |
 
 #### `search_dates` Parameters
 
@@ -100,6 +103,9 @@ The MCP server provides two main tools:
 | `country`           | string | ISO 3166-1 alpha-2 country code (e.g. 'GB')                 |
 | `sort_by_price`     | bool   | Sort results by price (lowest first)                        |
 | `passengers`        | int    | Number of adult passengers                                  |
+| `children`          | int    | Number of children (aged 2-11)                              |
+| `infants_in_seat`   | int    | Number of infants occupying their own seat                  |
+| `infants_on_lap`    | int    | Number of infants travelling on an adult's lap              |
 
 ## Quick Start
 
@@ -236,6 +242,10 @@ fli multi \
 | `--stops, -s`           | Maximum stops                              | `NON_STOP`, `ONE_STOP`           |
 | `--sort, -o`            | Sort results by                            | `CHEAPEST`, `DURATION`           |
 | `--format`              | Output format                              | `text`, `json`                   |
+| `--passengers, -p`      | Number of adult passengers                 | `2`                              |
+| `--children`            | Number of children (aged 2-11)             | `1`                              |
+| `--infants-in-seat`     | Infants occupying their own seat           | `1`                              |
+| `--infants-on-lap`      | Infants travelling on an adult's lap       | `1`                              |
 
 #### Dates Command (`fli dates`)
 
@@ -257,6 +267,10 @@ fli multi \
 | `--class, -c`           | Cabin class                                | `ECONOMY`, `BUSINESS`    |
 | `--stops, -s`           | Maximum stops                              | `NON_STOP`, `ONE_STOP`   |
 | `--time`                | Departure time window                      | `6-20`                   |
+| `--passengers, -p`      | Number of adult passengers                 | `2`                      |
+| `--children`            | Number of children (aged 2-11)             | `1`                      |
+| `--infants-in-seat`     | Infants occupying their own seat           | `1`                      |
+| `--infants-on-lap`      | Infants travelling on an adult's lap       | `1`                      |
 | `--sort`                | Sort by price                              | (flag)                   |
 | `--[day]`               | Day filters                                | `--monday`, `--friday`   |
 | `--format`              | Output format                              | `text`, `json`           |
@@ -271,6 +285,10 @@ fli multi \
 | `--class, -c`    | Cabin class                          | `ECONOMY`, `BUSINESS`          |
 | `--stops, -s`    | Maximum stops                        | `NON_STOP`, `ONE_STOP`         |
 | `--sort, -o`     | Sort results by                      | `CHEAPEST`, `DURATION`         |
+| `--passengers, -p` | Number of adult passengers         | `2`                            |
+| `--children`     | Number of children (aged 2-11)       | `1`                            |
+| `--infants-in-seat` | Infants occupying their own seat  | `1`                            |
+| `--infants-on-lap` | Infants travelling on an adult's lap | `1`                          |
 
 ## MCP Server Integration
 

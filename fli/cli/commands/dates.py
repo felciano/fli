@@ -263,6 +263,30 @@ def dates(
             min=1,
         ),
     ] = 1,
+    children: Annotated[
+        int,
+        typer.Option(
+            "--children",
+            help="Number of children (aged 2-11)",
+            min=0,
+        ),
+    ] = 0,
+    infants_in_seat: Annotated[
+        int,
+        typer.Option(
+            "--infants-in-seat",
+            help="Number of infants occupying their own seat",
+            min=0,
+        ),
+    ] = 0,
+    infants_on_lap: Annotated[
+        int,
+        typer.Option(
+            "--infants-on-lap",
+            help="Number of infants travelling on an adult's lap",
+            min=0,
+        ),
+    ] = 0,
 ):
     """Find the cheapest dates to fly between two airports.
 
@@ -316,6 +340,9 @@ def dates(
             "sort_by_price": sort_by_price,
             "days": [day.value for day in selected_days],
             "passengers": passengers,
+            "children": children,
+            "infants_in_seat": infants_in_seat,
+            "infants_on_lap": infants_on_lap,
         }
 
         # Build time restrictions from tuple
@@ -353,7 +380,12 @@ def dates(
         # Create search filters
         filters = DateSearchFilters(
             trip_type=trip_type,
-            passenger_info=PassengerInfo(adults=passengers),
+            passenger_info=PassengerInfo(
+                adults=passengers,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+            ),
             flight_segments=segments,
             stops=stops,
             seat_type=seat_type,
@@ -468,6 +500,9 @@ def dates(
                             )
                         ],
                         "passengers": passengers,
+                        "children": children,
+                        "infants_in_seat": infants_in_seat,
+                        "infants_on_lap": infants_on_lap,
                     },
                 )
             )
@@ -524,6 +559,9 @@ def dates(
                             )
                         ],
                         "passengers": passengers,
+                        "children": children,
+                        "infants_in_seat": infants_in_seat,
+                        "infants_on_lap": infants_on_lap,
                     },
                 )
             )

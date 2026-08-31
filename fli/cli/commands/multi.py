@@ -104,6 +104,30 @@ def multi(
             min=1,
         ),
     ] = 1,
+    children: Annotated[
+        int,
+        typer.Option(
+            "--children",
+            help="Number of children (aged 2-11)",
+            min=0,
+        ),
+    ] = 0,
+    infants_in_seat: Annotated[
+        int,
+        typer.Option(
+            "--infants-in-seat",
+            help="Number of infants occupying their own seat",
+            min=0,
+        ),
+    ] = 0,
+    infants_on_lap: Annotated[
+        int,
+        typer.Option(
+            "--infants-on-lap",
+            help="Number of infants travelling on an adult's lap",
+            min=0,
+        ),
+    ] = 0,
 ):
     """Search for multi-city flights with multiple legs.
 
@@ -152,7 +176,12 @@ def multi(
         # Create search filters
         filters = FlightSearchFilters(
             trip_type=trip_type,
-            passenger_info=PassengerInfo(adults=passengers),
+            passenger_info=PassengerInfo(
+                adults=passengers,
+                children=children,
+                infants_in_seat=infants_in_seat,
+                infants_on_lap=infants_on_lap,
+            ),
             flight_segments=segments,
             stops=stops,
             seat_type=seat_type,

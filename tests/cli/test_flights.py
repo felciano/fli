@@ -384,3 +384,75 @@ def test_flights_json_no_results(runner, mock_search_flights, mock_console):
     assert payload["success"] is True
     assert payload["count"] == 0
     assert payload["flights"] == []
+
+
+def test_flights_with_children_and_infants(runner, mock_search_flights, mock_console):
+    """Child and infant counts reach PassengerInfo on the flight filters."""
+    result = runner.invoke(
+        app,
+        [
+            "flights",
+            "JFK",
+            "LAX",
+            datetime.now().strftime("%Y-%m-%d"),
+            "--passengers",
+            "2",
+            "--children",
+            "1",
+            "--infants-in-seat",
+            "1",
+            "--infants-on-lap",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0
+    args, _ = mock_search_flights.search.call_args
+    passenger_info = args[0].passenger_info
+    assert passenger_info.adults == 2
+    assert passenger_info.children == 1
+    assert passenger_info.infants_in_seat == 1
+    assert passenger_info.infants_on_lap == 2
+
+
+def test_flights_json_query_echoes_child_and_infant_counts(
+    runner, mock_search_flights, mock_console
+):
+    """JSON query echo reports child and infant counts alongside adults."""
+    result = runner.invoke(
+        app,
+        [
+            "flights",
+            "JFK",
+            "LAX",
+            datetime.now().strftime("%Y-%m-%d"),
+            "--children",
+            "2",
+            "--infants-in-seat",
+            "1",
+            "--infants-on-lap",
+            "1",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0
+    query = json.loads(result.stdout)["query"]
+    assert query["children"] == 2
+    assert query["infants_in_seat"] == 1
+    assert query["infants_on_lap"] == 1
+
+
+def test_flights_rejects_negative_children(runner, mock_search_flights, mock_console):
+    """Child counts below zero are rejected by the CLI."""
+    result = runner.invoke(
+        app,
+        [
+            "flights",
+            "JFK",
+            "LAX",
+            datetime.now().strftime("%Y-%m-%d"),
+            "--children=-1",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "x>=0" in result.output

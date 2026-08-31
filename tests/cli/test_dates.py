@@ -331,3 +331,37 @@ def test_dates_json_empty_results(runner, mock_search_dates, mock_console):
     assert payload["success"] is True
     assert payload["count"] == 0
     assert payload["dates"] == []
+
+
+def test_dates_with_children_and_infants(runner, mock_search_dates, mock_console):
+    """Child and infant counts reach PassengerInfo on the date filters."""
+    mock_search_dates.search.return_value = []
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--passengers",
+            "2",
+            "--children",
+            "1",
+            "--infants-in-seat",
+            "1",
+            "--infants-on-lap",
+            "2",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0
+    args, _ = mock_search_dates.search.call_args
+    passenger_info = args[0].passenger_info
+    assert passenger_info.adults == 2
+    assert passenger_info.children == 1
+    assert passenger_info.infants_in_seat == 1
+    assert passenger_info.infants_on_lap == 2
+    query = json.loads(result.stdout)["query"]
+    assert query["children"] == 1
+    assert query["infants_in_seat"] == 1
+    assert query["infants_on_lap"] == 2
