@@ -72,6 +72,31 @@ def resolve_airport(code: str) -> Airport:
         raise ParseError(f"Invalid airport code: '{code}'") from e
 
 
+def resolve_airports(codes: str) -> list[Airport]:
+    """Resolve one or more comma-separated airport codes.
+
+    Used wherever a single origin/destination slot may name several airports
+    (e.g. ``JFK,LGA`` for "either New York airport"), which both the CLI and
+    the MCP tools accept.
+
+    Args:
+        codes: One or more IATA codes, comma-separated (e.g. 'JFK' or 'JFK, LGA').
+            Surrounding whitespace is stripped and blank tokens are dropped.
+
+    Returns:
+        The resolved airports, in the order given. Duplicates are preserved.
+
+    Raises:
+        ParseError: If any token is not a valid airport, or if no parsable
+            tokens remain (e.g. '' or ',,,').
+
+    """
+    airports = [resolve_airport(code.strip()) for code in codes.split(",") if code.strip()]
+    if not airports:
+        raise ParseError(f"No valid airport codes found in: '{codes}'")
+    return airports
+
+
 def parse_airlines(codes: list[str] | None) -> list[Airline] | None:
     """Parse a list of airline codes into Airline enums.
 

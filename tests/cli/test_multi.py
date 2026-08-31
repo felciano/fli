@@ -325,3 +325,26 @@ class TestMultiCityValidation:
         )
         assert result.exit_code == 1
         assert "No flights found" in result.stdout
+
+
+def test_multi_leg_rejects_multi_airport_origin(runner, mock_search_flights, mock_console):
+    """`multi` legs use the comma as a field separator, so multi-airport legs are invalid.
+
+    Multi-airport origins/destinations are supported by `flights` and `dates`,
+    but a `--leg` value is positionally parsed as ORIGIN,DEST,DATE. Accepting
+    `SEA,BFI,HKG,DATE` would be ambiguous with a four-field leg, so it is
+    deliberately rejected. This test pins that grammar so the behaviour is not
+    "fixed" by accident.
+    """
+    result = runner.invoke(
+        app,
+        [
+            "multi",
+            "--leg",
+            f"SEA,BFI,HKG,{_future_date(30)}",
+            "--leg",
+            f"PEK,SEA,{_future_date(60)}",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Invalid leg format" in result.stdout + result.stderr

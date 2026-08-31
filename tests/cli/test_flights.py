@@ -456,3 +456,97 @@ def test_flights_rejects_negative_children(runner, mock_search_flights, mock_con
     )
     assert result.exit_code != 0
     assert "x>=0" in result.output
+
+
+def test_flights_comma_separated_origin(runner, mock_search_flights, mock_console):
+    """Comma-separated origins resolve to a multi-airport departure list."""
+    result = runner.invoke(
+        app,
+        ["flights", "JFK,LGA", "LAX", datetime.now().strftime("%Y-%m-%d")],
+    )
+    assert result.exit_code == 0
+    filters = mock_search_flights.search.call_args[0][0]
+    segment = filters.flight_segments[0]
+    assert [apt for apt, _ in segment.departure_airport] == [Airport.JFK, Airport.LGA]
+
+
+def test_flights_comma_separated_destination(runner, mock_search_flights, mock_console):
+    """Comma-separated destinations resolve to a multi-airport arrival list."""
+    result = runner.invoke(
+        app,
+        ["flights", "JFK", "LAX,SFO", datetime.now().strftime("%Y-%m-%d")],
+    )
+    assert result.exit_code == 0
+    filters = mock_search_flights.search.call_args[0][0]
+    segment = filters.flight_segments[0]
+    assert [apt for apt, _ in segment.arrival_airport] == [Airport.LAX, Airport.SFO]
+
+
+def test_flights_multi_airport_whitespace_and_case(runner, mock_search_flights, mock_console):
+    """Whitespace around comma-separated codes is tolerated and case ignored."""
+    result = runner.invoke(
+        app,
+        ["flights", " jfk , lga ", "LAX", datetime.now().strftime("%Y-%m-%d")],
+    )
+    assert result.exit_code == 0
+    filters = mock_search_flights.search.call_args[0][0]
+    segment = filters.flight_segments[0]
+    assert [apt for apt, _ in segment.departure_airport] == [Airport.JFK, Airport.LGA]
+
+
+def test_flights_multi_airport_round_trip_reverses_lists(runner, mock_search_flights, mock_console):
+    """The return segment mirrors the full multi-airport origin/destination lists."""
+    depart = datetime.now().strftime("%Y-%m-%d")
+    ret = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    result = runner.invoke(app, ["flights", "JFK,LGA", "LAX,SFO", depart, "--return", ret])
+    assert result.exit_code == 0
+    filters = mock_search_flights.search.call_args[0][0]
+    outbound, inbound = filters.flight_segments
+    assert [apt for apt, _ in outbound.departure_airport] == [Airport.JFK, Airport.LGA]
+    assert [apt for apt, _ in outbound.arrival_airport] == [Airport.LAX, Airport.SFO]
+    assert [apt for apt, _ in inbound.departure_airport] == [Airport.LAX, Airport.SFO]
+    assert [apt for apt, _ in inbound.arrival_airport] == [Airport.JFK, Airport.LGA]
+
+
+def test_flights_multi_airport_json_query_and_booking_url(
+    runner, mock_search_flights, mock_console
+):
+    """JSON echoes canonical codes; the shareable link uses the first airport only."""
+    result = runner.invoke(
+        app,
+        ["flights", "jfk,lga", "LAX", datetime.now().strftime("%Y-%m-%d"), "--format", "json"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["query"]["origin"] == "JFK,LGA"
+    assert payload["query"]["destination"] == "LAX"
+    # Deep links can only encode one route: first origin/destination wins.
+    assert "JFK" in payload["booking_url"]
+    assert "LGA" not in payload["booking_url"]
+
+
+def test_flights_blank_origin_reports_parse_error(runner, mock_search_flights, mock_console):
+    """A comma-only origin is user error, not a crash: clean ParseError, no crash log."""
+    result = runner.invoke(
+        app,
+        ["flights", ",", "LAX", datetime.now().strftime("%Y-%m-%d"), "--format", "json"],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["error"]["type"] == "validation_error"
+    assert "No valid airport codes" in payload["error"]["message"]
+    assert "log_path" not in payload["error"]
+
+
+def test_flights_partial_invalid_airport_list(runner, mock_search_flights, mock_console):
+    """One bad code in a list fails with a message naming the offending token."""
+    result = runner.invoke(
+        app,
+        ["flights", "JFK,XXX", "LAX", datetime.now().strftime("%Y-%m-%d"), "--format", "json"],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["error"]["type"] == "validation_error"
+    # The message names only the offending token, not the whole raw string.
+    assert "'XXX'" in payload["error"]["message"]
+    assert "JFK" not in payload["error"]["message"]

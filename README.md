@@ -175,7 +175,16 @@ fli flights JFK LHR 2026-10-25 \
     --min-layover 90 \
     --max-layover 360 \
     --currency EUR --language en-GB --country GB
+
+# Multiple origin or destination airports (comma-separated)
+fli flights JFK,LGA LHR 2026-10-25
+fli flights LHR,LGW PIT,CLE 2026-10-25
 ```
+
+> **Note:** with several origins or destinations, the shareable top-level
+> `booking_url` can only encode one route, so it uses the first origin and
+> first destination. The per-flight booking links are itinerary-exact and
+> always correct.
 
 > ⚠️ **Experimental**
 > `--format json` is experimental. The JSON schema may change while the machine-readable CLI contract settles.
@@ -196,7 +205,13 @@ fli dates JFK LHR \
     --from 2026-01-01 \
     --to 2026-02-01 \
     --monday --friday      # Only Mondays and Fridays
+
+# Multiple origin or destination airports (comma-separated)
+fli dates JFK,LGA LHR
 ```
+
+> **Note:** as with `fli flights`, the per-date `booking_url` uses the first
+> origin and first destination only.
 
 > ⚠️ **Experimental**
 > `--format json` is experimental for date searches as well.
@@ -210,6 +225,8 @@ fli dates JFK LHR \
 
 ```bash
 # Two-leg multi-city trip
+# (Note: `--leg` uses the comma as a FIELD separator — ORIGIN,DEST,DATE — so
+#  multi-airport legs are not supported here.)
 fli multi --leg SEA,HKG,2026-12-26 --leg PEK,SEA,2027-01-02
 
 # Three-leg multi-city trip with filters

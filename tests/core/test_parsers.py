@@ -2,8 +2,14 @@
 
 import pytest
 
-from fli.core.parsers import ParseError, parse_airlines, parse_emissions, parse_sort_by
-from fli.models import Airline, EmissionsFilter, SortBy
+from fli.core.parsers import (
+    ParseError,
+    parse_airlines,
+    parse_emissions,
+    parse_sort_by,
+    resolve_airports,
+)
+from fli.models import Airline, Airport, EmissionsFilter, SortBy
 
 
 class TestParseEmissions:
@@ -119,3 +125,30 @@ def test_parse_sort_by(value, expected):
 def test_parse_sort_by_invalid():
     with pytest.raises(ParseError, match="Invalid sort_by value"):
         parse_sort_by("NONE")
+
+
+class TestResolveAirports:
+    """Tests for resolve_airports (comma-separated multi-airport parsing)."""
+
+    def test_single_code_returns_list(self):
+        assert resolve_airports("JFK") == [Airport.JFK]
+
+    def test_multiple_codes_preserve_order(self):
+        assert resolve_airports("JFK,LGA,EWR") == [Airport.JFK, Airport.LGA, Airport.EWR]
+
+    def test_whitespace_and_case_insensitive(self):
+        assert resolve_airports(" jfk , lga ") == [Airport.JFK, Airport.LGA]
+
+    def test_blank_tokens_are_dropped(self):
+        assert resolve_airports("JFK,,LGA") == [Airport.JFK, Airport.LGA]
+
+    @pytest.mark.parametrize("codes", ["", "   ", ",,,"])
+    def test_no_parsable_tokens_raises(self, codes):
+        with pytest.raises(ParseError) as exc:
+            resolve_airports(codes)
+        assert "No valid airport codes found" in str(exc.value)
+
+    def test_invalid_token_names_the_offender(self):
+        with pytest.raises(ParseError) as exc:
+            resolve_airports("JFK,XXX")
+        assert "'XXX'" in str(exc.value)

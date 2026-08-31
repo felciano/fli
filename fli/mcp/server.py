@@ -27,7 +27,7 @@ from fli.core import (
     parse_emissions,
     parse_max_stops,
     parse_sort_by,
-    resolve_airport,
+    resolve_airports,
     search_airports,
 )
 from fli.core.parsers import ParseError
@@ -533,12 +533,10 @@ def _serialize_date_result(
 # =============================================================================
 
 
-def _resolve_airports(codes: str) -> list[Airport]:
-    """Resolve one or more comma-separated airport codes."""
-    airports = [resolve_airport(code.strip()) for code in codes.split(",") if code.strip()]
-    if not airports:
-        raise ParseError(f"No valid airport codes found in: '{codes}'")
-    return airports
+# The comma-separated resolver now lives in :mod:`fli.core.parsers` so the CLI
+# shares it verbatim. Kept bound under the original private name because
+# tests/mcp/test_multi_airport.py imports it from this module.
+_resolve_airports = resolve_airports
 
 
 def _build_flight_filters(

@@ -25,7 +25,7 @@ from fli.core import (
     parse_emissions,
     parse_max_stops,
     parse_sort_by,
-    resolve_airport,
+    resolve_airports,
 )
 from fli.core.parsers import ParseError
 from fli.models import (
@@ -94,9 +94,14 @@ def _search_flights_core(
             f"{departure_window[0]}-{departure_window[1]}" if departure_window else None
         )
 
-        # Parse parameters using shared utilities
-        origin_airport = resolve_airport(origin)
-        destination_airport = resolve_airport(destination)
+        # Parse parameters using shared utilities.
+        # A single origin/destination slot may name several airports
+        # (e.g. "JFK,LGA"), matching what the MCP tools already accept.
+        origin_airports = resolve_airports(origin)
+        destination_airports = resolve_airports(destination)
+        # Echo canonical codes rather than the raw user text now that they parsed.
+        query["origin"] = ",".join(a.name.lstrip("_") for a in origin_airports)
+        query["destination"] = ",".join(a.name.lstrip("_") for a in destination_airports)
         seat_type = parse_cabin_class(cabin_class)
         stops = parse_max_stops(max_stops)
         parsed_airlines = parse_airlines(airlines)
@@ -130,17 +135,20 @@ def _search_flights_core(
 
         # Create flight segments using shared builder
         segments, trip_type = build_flight_segments(
-            origin=origin_airport,
-            destination=destination_airport,
+            origin=origin_airports,
+            destination=destination_airports,
             departure_date=departure_date,
             return_date=return_date,
             time_restrictions=time_restrictions,
         )
 
         # Shareable Google Flights deep link for this search.
+        # A `q=` deep link can only encode one route, so multi-airport searches
+        # fall back to the first origin/destination. Per-flight `tfs` links
+        # below are itinerary-exact and unaffected.
         booking_url = google_flights_url(
-            origin_airport.name.lstrip("_"),
-            destination_airport.name.lstrip("_"),
+            origin_airports[0].name.lstrip("_"),
+            destination_airports[0].name.lstrip("_"),
             departure_date,
             return_date,
             currency=currency,
@@ -150,7 +158,9 @@ def _search_flights_core(
 
         # Parse layover constraints (airports, min duration, max duration).
         layover_restrictions = None
-        layover_airports = [resolve_airport(code) for code in layover] if layover else None
+        layover_airports = (
+            [airport for code in layover for airport in resolve_airports(code)] if layover else None
+        )
         if layover_airports or min_layover is not None or max_layover is not None:
             layover_restrictions = LayoverRestrictions(
                 airports=layover_airports,
@@ -302,8 +312,23 @@ def _search_flights_core(
 
 
 def flights(
-    origin: Annotated[str, typer.Argument(help="Departure airport IATA code (e.g., JFK)")],
-    destination: Annotated[str, typer.Argument(help="Arrival airport IATA code (e.g., LHR)")],
+    origin: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Departure airport IATA code(s), comma-separated for "
+                "multiple (e.g., JFK or JFK,LGA)"
+            )
+        ),
+    ],
+    destination: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Arrival airport IATA code(s), comma-separated for multiple (e.g., LHR or LHR,LGW)"
+            )
+        ),
+    ],
     departure_date: Annotated[str, typer.Argument(help="Travel date (YYYY-MM-DD)")],
     return_date: Annotated[
         str | None,
@@ -522,6 +547,7 @@ def flights(
         fli flights JFK LAX 2026-10-25 --exclude-airlines DL
         fli flights BUF ATH 2026-10-25 --min-layover 120
         fli flights JFK LHR 2026-10-25 --passengers 2
+        fli flights JFK,LGA LHR 2026-10-25
 
     """
     _search_flights_core(

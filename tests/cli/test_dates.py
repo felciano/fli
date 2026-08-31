@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from fli.cli.main import app
-from fli.models import Airline
+from fli.models import Airline, Airport
 from fli.models.google_flights.base import TripType
 from fli.search import DatePrice
 
@@ -365,3 +365,69 @@ def test_dates_with_children_and_infants(runner, mock_search_dates, mock_console
     assert query["children"] == 1
     assert query["infants_in_seat"] == 1
     assert query["infants_on_lap"] == 2
+
+
+def _one_date_result():
+    """Return a single DatePrice so text-mode output is non-empty."""
+    return [DatePrice(date=(datetime.now() + timedelta(days=1),), price=299.99)]
+
+
+def test_dates_comma_separated_origin(runner, mock_search_dates, mock_console):
+    """Comma-separated origins resolve to a multi-airport departure list."""
+    mock_search_dates.search.return_value = _one_date_result()
+    result = runner.invoke(app, ["dates", "JFK,LGA", "LAX"])
+    assert result.exit_code == 0
+    filters = mock_search_dates.search.call_args[0][0]
+    segment = filters.flight_segments[0]
+    assert [apt for apt, _ in segment.departure_airport] == [Airport.JFK, Airport.LGA]
+
+
+def test_dates_comma_separated_destination(runner, mock_search_dates, mock_console):
+    """Comma-separated destinations resolve to a multi-airport arrival list."""
+    mock_search_dates.search.return_value = _one_date_result()
+    result = runner.invoke(app, ["dates", "JFK", "LAX,SFO"])
+    assert result.exit_code == 0
+    filters = mock_search_dates.search.call_args[0][0]
+    segment = filters.flight_segments[0]
+    assert [apt for apt, _ in segment.arrival_airport] == [Airport.LAX, Airport.SFO]
+
+
+def test_dates_multi_airport_round_trip(runner, mock_search_dates, mock_console):
+    """The return segment mirrors the full multi-airport lists for round trips."""
+    mock_search_dates.search.return_value = [
+        DatePrice(
+            date=(datetime.now() + timedelta(days=1), datetime.now() + timedelta(days=4)),
+            price=499.99,
+        )
+    ]
+    result = runner.invoke(app, ["dates", "JFK,LGA", "LAX,SFO", "-R"])
+    assert result.exit_code == 0
+    filters = mock_search_dates.search.call_args[0][0]
+    outbound, inbound = filters.flight_segments
+    assert [apt for apt, _ in outbound.departure_airport] == [Airport.JFK, Airport.LGA]
+    assert [apt for apt, _ in outbound.arrival_airport] == [Airport.LAX, Airport.SFO]
+    assert [apt for apt, _ in inbound.departure_airport] == [Airport.LAX, Airport.SFO]
+    assert [apt for apt, _ in inbound.arrival_airport] == [Airport.JFK, Airport.LGA]
+
+
+def test_dates_multi_airport_json_query(runner, mock_search_dates, mock_console):
+    """JSON echoes canonical codes; per-date links use the first airport only."""
+    mock_search_dates.search.return_value = _one_date_result()
+    result = runner.invoke(app, ["dates", "jfk,lga", "LAX", "--format", "json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["query"]["origin"] == "JFK,LGA"
+    assert payload["query"]["destination"] == "LAX"
+    assert payload["dates"]
+    for entry in payload["dates"]:
+        assert "JFK" in entry["booking_url"]
+        assert "LGA" not in entry["booking_url"]
+
+
+def test_dates_blank_origin_reports_parse_error(runner, mock_search_dates, mock_console):
+    """A comma-only origin fails cleanly rather than crashing."""
+    mock_search_dates.search.return_value = _one_date_result()
+    result = runner.invoke(app, ["dates", ",", "LAX"])
+    assert result.exit_code == 1
+    assert "No valid airport codes" in result.stdout
+    assert "Traceback" not in result.stdout

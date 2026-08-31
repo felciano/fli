@@ -16,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from fli.cli.main import app
-from fli.models import Airline, Alliance
+from fli.models import Airline, Airport, Alliance
 
 
 @pytest.fixture
@@ -344,3 +344,43 @@ class TestLocaleFlags:
             ],
         )
         assert result.exit_code != 0
+
+
+class TestLayoverAirportParsing:
+    """``--layover`` accepts comma-separated codes as well as repeated flags."""
+
+    def test_layover_accepts_comma_separated_airports(
+        self, runner, mock_search_flights, mock_console
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "flights",
+                "BUF",
+                "ATH",
+                datetime.now().strftime("%Y-%m-%d"),
+                "--layover",
+                "ORD,MDW",
+            ],
+        )
+        assert result.exit_code == 0
+        f = _filters_from_last_call(mock_search_flights)
+        assert f.layover_restrictions.airports == [Airport.ORD, Airport.MDW]
+
+    def test_layover_repeated_flag_still_works(self, runner, mock_search_flights, mock_console):
+        result = runner.invoke(
+            app,
+            [
+                "flights",
+                "BUF",
+                "ATH",
+                datetime.now().strftime("%Y-%m-%d"),
+                "--layover",
+                "ORD",
+                "--layover",
+                "MDW",
+            ],
+        )
+        assert result.exit_code == 0
+        f = _filters_from_last_call(mock_search_flights)
+        assert f.layover_restrictions.airports == [Airport.ORD, Airport.MDW]
