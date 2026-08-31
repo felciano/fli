@@ -69,7 +69,7 @@ devcontainer:
 # quote churn.
 generate-enums:
 	uv run python scripts/generate_enums.py
-	uv run --extra dev ruff format fli/models/airport.py fli/models/airline.py
+	uv run --extra dev ruff format fli/models/airport.py fli/models/airline.py fli/models/icao.py
 
 # Generate the requirements.txt file
 requirements:
@@ -117,7 +117,7 @@ help:
 	@echo "  make ci          - Run CI locally using act (requires Docker)"
 	@echo "  make ci-docker   - Run CI in Docker container"
 	@echo "  make devcontainer - Build dev container image"
-	@echo "  make generate-enums - Regenerate Airport/Airline enums from data/*.csv"
+	@echo "  make generate-enums - Regenerate Airport/Airline enums and the ICAO map from data/*.csv"
 	@echo "  make requirements - Generate the requirements.txt file"
 	@echo "  make bump-preview - Preview next version (patch/minor/major)"
 	@echo "  make release-notes - Preview release notes since last tag"

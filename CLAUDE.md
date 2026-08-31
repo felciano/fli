@@ -68,6 +68,8 @@ uv run mkdocs build         # Build static docs
 
 4. **Data Models** (`fli/models/`)
    - **Base models**: `Airport`, `Airline` enums with IATA codes
+   - **ICAO map**: `fli/models/icao.py` — generated `ICAO_TO_IATA` table so
+     4-letter codes (`KJFK`, `EGLL`) resolve; curated subset, not the full register
    - **Google Flights models**: `FlightSearchFilters`, `FlightResult`, `FlightLeg`, etc.
    - **Filter models**: `TimeRestrictions`, `MaxStops`, `SeatType`, `SortBy`
    - All models use Pydantic for validation
@@ -110,7 +112,7 @@ uv run mkdocs build         # Build static docs
 Search for flights on a specific date.
 
 **Key Parameters:**
-- `origin` / `destination` - Airport IATA codes (comma-separated for multi-airport)
+- `origin` / `destination` - Airport IATA or ICAO codes (comma-separated for multi-airport)
 - `departure_date` / `return_date` - Dates in YYYY-MM-DD format
 - `cabin_class` - ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
 - `max_stops` - ANY, NON_STOP, ONE_STOP, TWO_PLUS_STOPS
@@ -135,7 +137,7 @@ passed to `get_booking_options` for per-vendor pricing.
 Find cheapest travel dates within a range.
 
 **Key Parameters:**
-- `origin` / `destination` - Airport IATA codes
+- `origin` / `destination` - Airport IATA or ICAO codes
 - `start_date` / `end_date` - Date range in YYYY-MM-DD format
 - `trip_duration` - Number of days for round trips
 - `is_round_trip` - Boolean for round-trip search
@@ -214,7 +216,10 @@ The release workflows (`.github/workflows/release.yml` and
 ## Important Implementation Notes
 
 - Google Flights API integration requires careful rate limiting (handled automatically)
-- Airport and airline codes use official IATA standards
+- Airport and airline codes use official IATA standards; airport slots also
+  accept 4-letter ICAO codes via the generated `ICAO_TO_IATA` table
+  (`fli/models/icao.py`, source `data/icao_to_iata.csv`, regenerate with
+  `make generate-enums`)
 - Flight search supports complex filters: time ranges, cabin classes, stop preferences, sorting
 - Date search finds cheapest flights within flexible date ranges
 - MCP server uses industry-standard naming: `origin`/`destination`, `cabin_class`, `max_stops`

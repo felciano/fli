@@ -550,3 +550,34 @@ def test_flights_partial_invalid_airport_list(runner, mock_search_flights, mock_
     # The message names only the offending token, not the whole raw string.
     assert "'XXX'" in payload["error"]["message"]
     assert "JFK" not in payload["error"]["message"]
+
+
+def test_flights_accepts_icao_codes(runner, mock_search_flights, mock_console):
+    """Four-letter ICAO codes reach the search layer as the right airports."""
+    result = runner.invoke(
+        app,
+        ["flights", "KJFK", "KLAX", datetime.now().strftime("%Y-%m-%d")],
+    )
+    assert result.exit_code == 0
+    filters = mock_search_flights.search.call_args[0][0]
+    segment = filters.flight_segments[0]
+    assert [apt for apt, _ in segment.departure_airport] == [Airport.JFK]
+    assert [apt for apt, _ in segment.arrival_airport] == [Airport.LAX]
+
+
+def test_flights_rejects_unknown_icao_with_a_labelled_error(
+    runner, mock_search_flights, mock_console
+):
+    """An unmapped four-letter code fails naming the slot, not just the code."""
+    result = runner.invoke(
+        app,
+        ["flights", "ZZZZ", "LAX", datetime.now().strftime("%Y-%m-%d"), "--format", "json"],
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.stdout)
+    assert payload["error"]["type"] == "validation_error"
+    message = payload["error"]["message"]
+    # Keeps the "Invalid <slot> airport code" prefix that MCP clients and the
+    # CLI already string-match on, while explaining the four-letter dispatch.
+    assert "Invalid origin airport code: 'ZZZZ'" in message
+    assert "ICAO" in message

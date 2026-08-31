@@ -348,3 +348,65 @@ def test_multi_leg_rejects_multi_airport_origin(runner, mock_search_flights, moc
     )
     assert result.exit_code != 0
     assert "Invalid leg format" in result.stdout + result.stderr
+
+
+def test_multi_leg_accepts_icao_codes(runner, mock_search_flights, mock_console):
+    """ICAO codes work in `--leg` too, mixed freely with IATA codes.
+
+    The leg grammar validates code *shape* before ``resolve_airport`` runs, so
+    a 3-letter-only pattern would reject `KJFK` with a confusing "Invalid leg
+    format" error rather than resolving it.
+    """
+    result = runner.invoke(
+        app,
+        [
+            "multi",
+            "--leg",
+            f"KSEA,VHHH,{_future_date(30)}",
+            "--leg",
+            f"VHHH,SEA,{_future_date(37)}",
+        ],
+    )
+    assert result.exit_code == 0
+    filters = mock_search_flights.search.call_args[0][0]
+    first, second = filters.flight_segments[0], filters.flight_segments[1]
+    assert [apt for apt, _ in first.departure_airport] == [Airport.SEA]
+    assert [apt for apt, _ in first.arrival_airport] == [Airport.HKG]
+    assert [apt for apt, _ in second.departure_airport] == [Airport.HKG]
+    assert [apt for apt, _ in second.arrival_airport] == [Airport.SEA]
+
+
+def test_multi_leg_unmapped_icao_reports_an_airport_error(
+    runner, mock_search_flights, mock_console
+):
+    """An unmapped 4-letter code is an airport error, not a leg-format error."""
+    result = runner.invoke(
+        app,
+        [
+            "multi",
+            "--leg",
+            f"ZZZZ,HKG,{_future_date(30)}",
+            "--leg",
+            f"HKG,SEA,{_future_date(37)}",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Invalid airport code: 'ZZZZ'" in result.stdout
+    assert "ICAO" in result.stdout
+    assert "Invalid leg format" not in result.stdout
+
+
+def test_multi_leg_still_rejects_five_letter_codes(runner, mock_search_flights, mock_console):
+    """Widening the code pattern to 3-or-4 letters must not open it further."""
+    result = runner.invoke(
+        app,
+        [
+            "multi",
+            "--leg",
+            f"KSEAX,HKG,{_future_date(30)}",
+            "--leg",
+            f"HKG,SEA,{_future_date(37)}",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Invalid leg format" in result.stdout

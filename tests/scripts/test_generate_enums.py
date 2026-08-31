@@ -16,6 +16,8 @@ import csv
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "generate_enums.py"
 
@@ -107,3 +109,50 @@ class TestCommittedEnumsMatchCsv:
             for code, name in entries
         }
         assert AIRLINE_NAMES == expected
+
+
+def _icao_csv_rows() -> list[tuple[str, str]]:
+    with open(REPO_ROOT / "data" / "icao_to_iata.csv", encoding="utf-8", newline="") as fh:
+        return [
+            (row["ICAO"].strip().upper(), row["IATA"].strip().upper()) for row in csv.DictReader(fh)
+        ]
+
+
+class TestCommittedIcaoMapMatchesCsv:
+    """``fli/models/icao.py`` is generated — it must not drift from the CSV."""
+
+    def test_icao_module_matches_csv(self):
+        from fli.models.icao import ICAO_TO_IATA
+
+        assert ICAO_TO_IATA == dict(_icao_csv_rows())
+
+    def test_icao_csv_targets_exist_in_airport_enum(self):
+        from fli.models.airport import AIRPORT_NAMES
+
+        missing = [iata for _, iata in _icao_csv_rows() if iata not in AIRPORT_NAMES]
+        assert missing == []
+
+    def test_icao_csv_keys_are_four_alpha_and_unique(self):
+        keys = [icao for icao, _ in _icao_csv_rows()]
+        assert [k for k in keys if not (len(k) == 4 and k.isalpha())] == []
+        assert len(set(keys)) == len(keys)
+
+
+class TestIcaoGeneratorValidation:
+    """The generator is the validation layer that a raw CSV read would lack."""
+
+    def test_generator_rejects_unknown_iata_target(self):
+        with pytest.raises(ValueError, match="not an Airport code"):
+            generate_enums._validate_icao_rows([("KJFK", "JFK"), ("KZZZ", "ZZZ")])
+
+    def test_generator_rejects_duplicate_icao(self):
+        with pytest.raises(ValueError, match="[Dd]uplicate"):
+            generate_enums._validate_icao_rows([("KJFK", "JFK"), ("KJFK", "LAX")])
+
+    def test_generator_rejects_three_letter_key(self):
+        with pytest.raises(ValueError, match="four letters"):
+            generate_enums._validate_icao_rows([("JFK", "JFK")])
+
+    def test_generator_accepts_the_real_table(self):
+        rows = _icao_csv_rows()
+        assert generate_enums._validate_icao_rows(rows) == rows

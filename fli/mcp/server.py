@@ -101,10 +101,12 @@ class FlightSearchParams(BaseModel):
     """Parameters for searching flights on a specific date."""
 
     origin: str = Field(
-        description="Departure airport IATA code(s), comma-separated for multiple (e.g., 'JFK,LGA')"
+        description="Departure airport IATA or ICAO code(s), comma-separated "
+        "for multiple (e.g., 'JFK,LGA')"
     )
     destination: str = Field(
-        description="Arrival airport IATA code(s), comma-separated for multiple (e.g., 'LHR,CDG')"
+        description="Arrival airport IATA or ICAO code(s), comma-separated "
+        "for multiple (e.g., 'LHR,CDG')"
     )
     departure_date: str = Field(description="Outbound travel date in YYYY-MM-DD format")
     return_date: str | None = Field(
@@ -193,10 +195,12 @@ class DateSearchParams(BaseModel):
     """Parameters for finding the cheapest travel dates within a range."""
 
     origin: str = Field(
-        description="Departure airport IATA code(s), comma-separated for multiple (e.g., 'JFK,LGA')"
+        description="Departure airport IATA or ICAO code(s), comma-separated "
+        "for multiple (e.g., 'JFK,LGA')"
     )
     destination: str = Field(
-        description="Arrival airport IATA code(s), comma-separated for multiple (e.g., 'LHR,CDG')"
+        description="Arrival airport IATA or ICAO code(s), comma-separated "
+        "for multiple (e.g., 'LHR,CDG')"
     )
     start_date: str = Field(description="Start of date range in YYYY-MM-DD format")
     end_date: str = Field(description="End of date range in YYYY-MM-DD format")
@@ -924,14 +928,14 @@ def search_flights(
     origin: Annotated[
         str,
         Field(
-            description="Departure airport IATA code(s), comma-separated for multiple "
+            description="Departure airport IATA or ICAO code(s), comma-separated for multiple "
             "(e.g., 'JFK' or 'JFK,LGA')"
         ),
     ],
     destination: Annotated[
         str,
         Field(
-            description="Arrival airport IATA code(s), comma-separated for multiple "
+            description="Arrival airport IATA or ICAO code(s), comma-separated for multiple "
             "(e.g., 'LHR' or 'LHR,CDG')"
         ),
     ],
@@ -1090,14 +1094,14 @@ def search_dates(
     origin: Annotated[
         str,
         Field(
-            description="Departure airport IATA code(s), comma-separated for multiple "
+            description="Departure airport IATA or ICAO code(s), comma-separated for multiple "
             "(e.g., 'JFK' or 'JFK,LGA')"
         ),
     ],
     destination: Annotated[
         str,
         Field(
-            description="Arrival airport IATA code(s), comma-separated for multiple "
+            description="Arrival airport IATA or ICAO code(s), comma-separated for multiple "
             "(e.g., 'LHR' or 'LHR,CDG')"
         ),
     ],
@@ -1229,11 +1233,11 @@ def _search_dates_from_params(params: DateSearchParams) -> dict[str, Any]:
 def get_booking_options(
     origin: Annotated[
         str,
-        Field(description="Departure airport IATA code(s), comma-separated for multiple"),
+        Field(description="Departure airport IATA or ICAO code(s), comma-separated for multiple"),
     ],
     destination: Annotated[
         str,
-        Field(description="Arrival airport IATA code(s), comma-separated for multiple"),
+        Field(description="Arrival airport IATA or ICAO code(s), comma-separated for multiple"),
     ],
     departure_date: Annotated[str, Field(description="Travel date in YYYY-MM-DD format")],
     flight_numbers: Annotated[

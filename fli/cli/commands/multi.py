@@ -24,11 +24,18 @@ from fli.models import (
 )
 from fli.search import SearchClientError, SearchFlights
 
-LEG_PATTERN = re.compile(r"^([A-Za-z]{3}),([A-Za-z]{3}),(\d{4}-\d{1,2}-\d{1,2})$")
+# 3 letters = IATA, 4 = ICAO. Deliberately not ``+``: the comma is the
+# field separator here, so a longer token is a malformed leg, not an
+# airport, and must fail as a leg-format error.
+LEG_PATTERN = re.compile(r"^([A-Za-z]{3,4}),([A-Za-z]{3,4}),(\d{4}-\d{1,2}-\d{1,2})$")
 
 
 def _parse_leg(value: str) -> tuple[str, str, str]:
     """Parse a leg string in ORIGIN,DEST,DATE format.
+
+    ORIGIN and DEST may each be a 3-letter IATA or 4-letter ICAO code; the
+    codes are only shape-checked here and validated by
+    :func:`fli.core.parsers.resolve_airport`.
 
     Returns:
         Tuple of (origin, destination, date).
@@ -51,7 +58,10 @@ def multi(
         typer.Option(
             "--leg",
             "-l",
-            help="Flight leg in ORIGIN,DEST,DATE format (repeatable, minimum 2)",
+            help=(
+                "Flight leg in ORIGIN,DEST,DATE format, where ORIGIN and DEST are "
+                "IATA or ICAO codes (repeatable, minimum 2)"
+            ),
         ),
     ],
     departure_window: Annotated[

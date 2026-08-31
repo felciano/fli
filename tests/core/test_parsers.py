@@ -7,9 +7,12 @@ from fli.core.parsers import (
     parse_airlines,
     parse_emissions,
     parse_sort_by,
+    resolve_airport,
     resolve_airports,
 )
 from fli.models import Airline, Airport, EmissionsFilter, SortBy
+from fli.models.airport import AIRPORT_NAMES
+from fli.models.icao import ICAO_TO_IATA
 
 
 class TestParseEmissions:
@@ -169,3 +172,95 @@ class TestAirportErrorLabels:
         message = r"^No valid destination airport codes found in: ',,'$"
         with pytest.raises(ParseError, match=message):
             resolve_airports(",,", label="destination")
+
+
+class TestResolveAirportICAO:
+    """Four-letter ICAO codes resolve to the same members as their IATA twins."""
+
+    def test_icao_maps_to_iata_member(self):
+        # Identity, not equality: proves we returned the real enum member
+        # rather than constructing a lookalike.
+        assert resolve_airport("KJFK") is Airport.JFK
+
+    @pytest.mark.parametrize(
+        ("icao", "expected"),
+        [
+            ("VTBS", Airport.BKK),
+            ("EGLL", Airport.LHR),
+            ("CYYZ", Airport.YYZ),
+            ("SBGR", Airport.GRU),
+        ],
+    )
+    def test_icao_non_us_prefixes(self, icao, expected):
+        assert resolve_airport(icao) is expected
+
+    def test_icao_is_case_insensitive(self):
+        assert resolve_airport("kjfk") is Airport.JFK
+        assert resolve_airport("KjFk") is Airport.JFK
+
+    def test_icao_tolerates_surrounding_whitespace(self):
+        assert resolve_airport(" kjfk ") is Airport.JFK
+
+    def test_three_letter_codes_unchanged(self):
+        assert resolve_airport("JFK") is Airport.JFK
+        # AAA is the first enum member — guards the boundary.
+        assert resolve_airport("AAA") is Airport.AAA
+
+    def test_three_letter_error_message_is_byte_identical(self):
+        # Deliberately duplicates TestAirportErrorLabels so the regression
+        # guard is visible at the site of the change: the ICAO clause must
+        # never leak into the generic three-letter message.
+        with pytest.raises(ParseError, match=r"^Invalid airport code: 'XXX'$"):
+            resolve_airport("XXX")
+        with pytest.raises(ParseError, match=r"^Invalid origin airport code: 'XXX'$"):
+            resolve_airport("XXX", label="origin")
+
+    def test_unknown_four_letter_code_says_icao_and_partial_coverage(self):
+        with pytest.raises(ParseError) as exc:
+            resolve_airport("ZZZZ")
+        message = str(exc.value)
+        assert "Invalid airport code: 'ZZZZ'" in message
+        assert "ICAO" in message
+        assert "IATA" in message
+
+    def test_unknown_icao_error_carries_the_label(self):
+        with pytest.raises(ParseError) as exc:
+            resolve_airport("ZZZZ", label="destination")
+        message = str(exc.value)
+        # Keeps the existing "Invalid <slot> airport code" prefix that CLI and
+        # MCP callers already match on, and explains the ICAO dispatch after it.
+        assert message.startswith("Invalid destination airport code: 'ZZZZ'")
+        assert "ICAO" in message
+
+    @pytest.mark.parametrize("code", ["JF-K", "JFK1"])
+    def test_four_letter_non_alpha_falls_through_to_iata_error(self, code):
+        with pytest.raises(ParseError) as exc:
+            resolve_airport(code)
+        message = str(exc.value)
+        assert message == f"Invalid airport code: '{code}'"
+        assert "ICAO" not in message
+
+    def test_no_airport_member_name_is_four_characters(self):
+        # The whole dispatch rests on this: if an airports.csv refresh ever
+        # adds a four-character code it must fail here loudly rather than
+        # silently route that code into the ICAO table.
+        assert [code for code in AIRPORT_NAMES if len(code) == 4] == []
+
+    def test_every_icao_target_resolves(self):
+        for icao, iata in ICAO_TO_IATA.items():
+            assert resolve_airport(icao).name == iata
+
+
+class TestResolveAirportsICAO:
+    """The multi-airport slot inherits ICAO support by delegation."""
+
+    def test_resolve_airports_accepts_icao(self):
+        assert resolve_airports("KJFK,KLAX") == [Airport.JFK, Airport.LAX]
+
+    def test_resolve_airports_mixes_icao_and_iata(self):
+        assert resolve_airports(" kjfk , LGA ") == [Airport.JFK, Airport.LGA]
+
+    def test_resolve_airports_bad_icao_names_the_slot(self):
+        with pytest.raises(ParseError) as exc:
+            resolve_airports("KJFK,ZZZZ", label="origin")
+        assert "Invalid origin airport code: 'ZZZZ'" in str(exc.value)

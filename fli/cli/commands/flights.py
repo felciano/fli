@@ -318,7 +318,7 @@ def flights(
         str,
         typer.Argument(
             help=(
-                "Departure airport IATA code(s), comma-separated for "
+                "Departure airport IATA or ICAO code(s), comma-separated for "
                 "multiple (e.g., JFK or JFK,LGA)"
             )
         ),
@@ -327,7 +327,8 @@ def flights(
         str,
         typer.Argument(
             help=(
-                "Arrival airport IATA code(s), comma-separated for multiple (e.g., LHR or LHR,LGW)"
+                "Arrival airport IATA or ICAO code(s), comma-separated for "
+                "multiple (e.g., LHR or LHR,LGW)"
             )
         ),
     ],

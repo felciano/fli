@@ -9,10 +9,12 @@ airline codes.
 The script expects CSV files in the following locations:
 - ``data/airports.csv``: Contains airport codes and names
 - ``data/airlines.csv``: Contains airline IATA codes and names
+- ``data/icao_to_iata.csv``: Maps 4-letter ICAO codes to IATA codes
 
-The generated enum files are written to:
+The generated files are written to:
 - ``fli/models/airport.py``: Contains the ``Airport`` enum
 - ``fli/models/airline.py``: Contains the ``Airline`` enum
+- ``fli/models/icao.py``: Contains the ``ICAO_TO_IATA`` mapping
 
 Output format
 -------------
@@ -251,6 +253,99 @@ def generate_airline_enum() -> None:
     print(f"Generated {len(entries)} Airline members in {out_path}")
 
 
+def _validate_icao_rows(rows: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Validate ICAO→IATA pairs, raising rather than emitting a broken table.
+
+    Generating a Python module (instead of reading the CSV at runtime) buys
+    exactly this: a typo'd target is caught here, at generation time, rather
+    than surfacing to a user as a nonsensical ``Invalid airport code: 'JFX'``
+    for the input ``KJFK``.
+
+    Args:
+        rows: ``(icao_code, iata_code)`` pairs in CSV order.
+
+    Returns:
+        The same rows, unchanged, when every check passes.
+
+    Raises:
+        ValueError: If a key is not four letters, a key repeats, or an IATA
+            target is not a member of the generated ``Airport`` enum.
+
+    """
+    from fli.models.airport import AIRPORT_NAMES
+
+    bad_keys = sorted({icao for icao, _ in rows if not (len(icao) == 4 and icao.isalpha())})
+    if bad_keys:
+        raise ValueError(
+            "ICAO keys must be exactly four letters — fix data/icao_to_iata.csv: "
+            + ", ".join(bad_keys)
+        )
+
+    duplicates = sorted(
+        {icao for icao, count in Counter(icao for icao, _ in rows).items() if count > 1}
+    )
+    if duplicates:
+        raise ValueError(
+            "Duplicate ICAO keys — fix data/icao_to_iata.csv: " + ", ".join(duplicates)
+        )
+
+    unknown = sorted({iata for _, iata in rows if iata not in AIRPORT_NAMES})
+    if unknown:
+        raise ValueError(
+            "ICAO target is not an Airport code — fix data/icao_to_iata.csv: " + ", ".join(unknown)
+        )
+
+    return rows
+
+
+def generate_icao_map() -> None:
+    """Generate ``ICAO_TO_IATA`` in ``fli/models/icao.py`` from the CSV.
+
+    Emitted as a plain ``dict`` rather than an ``Enum``: nothing here is a
+    typed domain value, it is a lookup consulted once inside
+    :func:`fli.core.parsers.resolve_airport` before the real ``Airport``
+    lookup runs.
+    """
+    csv_path = PROJECT_DIR / "data" / "icao_to_iata.csv"
+    out_path = PROJECT_DIR / "fli" / "models" / "icao.py"
+    if not csv_path.exists():
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
+    try:
+        with open(csv_path, encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh)
+            rows = [
+                (row["ICAO"].strip().upper(), row["IATA"].strip().upper())
+                for row in reader
+                if row["ICAO"].strip()
+            ]
+    except (KeyError, csv.Error) as e:
+        raise ValueError(f"Error reading CSV file: {e}") from e
+
+    rows = _validate_icao_rows(rows)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write('"""ICAO (4-letter) to IATA (3-letter) airport code mapping.\n\n')
+        fh.write("Auto-generated from data/icao_to_iata.csv — do not hand-edit;\n")
+        fh.write("run ``make generate-enums`` instead.\n\n")
+        fh.write(
+            "Coverage is a curated subset of major airports, not the full ICAO\n"
+            "register: every key here resolves, but a valid ICAO code missing\n"
+            "from the table is a coverage gap rather than an unknown airport.\n"
+            "Every value is guaranteed to be a member name of\n"
+            ":class:`fli.models.airport.Airport` — the generator refuses to\n"
+            "emit a target it cannot find there.\n"
+        )
+        fh.write('"""\n\n')
+        fh.write("ICAO_TO_IATA: dict[str, str] = {\n")
+        for icao, iata in rows:
+            fh.write(f"    {icao!r}: {iata!r},\n")
+        fh.write("}\n")
+    print(f"Generated {len(rows)} ICAO mappings in {out_path}")
+
+
 if __name__ == "__main__":
     generate_airport_enum()
     generate_airline_enum()
+    generate_icao_map()

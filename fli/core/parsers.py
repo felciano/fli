@@ -18,6 +18,7 @@ from fli.models import (
     SeatType,
     SortBy,
 )
+from fli.models.icao import ICAO_TO_IATA
 
 _AIRLINE_SEPARATORS = re.compile(r"[,\s]+")
 
@@ -56,8 +57,23 @@ def resolve_enum(enum_cls: type[T], name: str) -> T:
 def resolve_airport(code: str, *, label: str | None = None) -> Airport:
     """Resolve an airport code to an Airport enum.
 
+    Accepts both 3-letter IATA codes and 4-letter ICAO codes. The two are
+    told apart purely by length, which is unambiguous here: every
+    :class:`~fli.models.airport.Airport` member name is exactly three
+    letters (pinned by a test), so a 4-letter alpha token can only be an
+    ICAO code. ICAO coverage is a curated subset of major airports — see
+    :data:`fli.models.icao.ICAO_TO_IATA` — so a genuine ICAO code missing
+    from the table is a coverage gap, and the error says so rather than
+    claiming the airport does not exist.
+
+    Note: ``fli-js`` deliberately does *not* mirror this. Its
+    ``resolveAirport`` stays IATA-only, so the two libraries accept
+    different inputs on purpose; do not "fix" that without porting the
+    generated mapping too.
+
     Args:
-        code: IATA airport code (e.g., 'JFK', 'LHR')
+        code: IATA or ICAO airport code (e.g., 'JFK', 'LHR', 'KJFK', 'EGLL').
+            Surrounding whitespace is stripped and case is ignored.
         label: Optional slot name ('origin', 'destination', 'layover') woven
             into the error so a bad code in a multi-slot command says which
             slot was at fault.
@@ -66,11 +82,25 @@ def resolve_airport(code: str, *, label: str | None = None) -> Airport:
         The corresponding Airport enum member
 
     Raises:
-        ParseError: If the code is not a valid airport
+        ParseError: If the code is neither a valid IATA code nor a mapped
+            ICAO code.
 
     """
+    normalized = code.strip().upper()
+
+    if len(normalized) == 4 and normalized.isalpha():
+        mapped = ICAO_TO_IATA.get(normalized)
+        if mapped is None:
+            slot = f"{label} " if label else ""
+            raise ParseError(
+                f"Invalid {slot}airport code: '{code}'. Four-letter codes are read as "
+                f"ICAO; '{normalized}' is not in the ICAO-to-IATA table (coverage is a "
+                f"curated subset of major airports). Use the 3-letter IATA code."
+            )
+        normalized = mapped
+
     try:
-        return getattr(Airport, code.upper())
+        return getattr(Airport, normalized)
     except AttributeError as e:
         slot = f"{label} " if label else ""
         raise ParseError(f"Invalid {slot}airport code: '{code}'") from e

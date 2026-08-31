@@ -57,8 +57,8 @@ The MCP server provides two main tools:
 
 | Parameter           | Type   | Description                                                 |
 |---------------------|--------|-------------------------------------------------------------|
-| `origin`            | string | Departure airport IATA code(s) — comma-separated for multi  |
-| `destination`       | string | Arrival airport IATA code(s) — comma-separated for multi    |
+| `origin`            | string | Departure airport IATA or ICAO code(s) — comma-separated for multi  |
+| `destination`       | string | Arrival airport IATA or ICAO code(s) — comma-separated for multi    |
 | `departure_date`    | string | Travel date in YYYY-MM-DD format                            |
 | `return_date`       | string | Return date for round trips (optional)                      |
 | `cabin_class`       | string | ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST                |
@@ -83,8 +83,8 @@ The MCP server provides two main tools:
 
 | Parameter           | Type   | Description                                                 |
 |---------------------|--------|-------------------------------------------------------------|
-| `origin`            | string | Departure airport IATA code(s) — comma-separated for multi  |
-| `destination`       | string | Arrival airport IATA code(s) — comma-separated for multi    |
+| `origin`            | string | Departure airport IATA or ICAO code(s) — comma-separated for multi  |
+| `destination`       | string | Arrival airport IATA or ICAO code(s) — comma-separated for multi    |
 | `start_date`        | string | Start of date range in YYYY-MM-DD format                    |
 | `end_date`          | string | End of date range in YYYY-MM-DD format                      |
 | `trip_duration`     | int    | Trip duration in days (for round-trips)                     |
@@ -179,7 +179,15 @@ fli flights JFK LHR 2026-10-25 \
 # Multiple origin or destination airports (comma-separated)
 fli flights JFK,LGA LHR 2026-10-25
 fli flights LHR,LGW PIT,CLE 2026-10-25
+
+# 4-letter ICAO codes work anywhere an IATA code does, and can be mixed
+fli flights KJFK EGLL 2026-10-25
+fli flights KJFK,LGA LHR 2026-10-25
 ```
+
+> **Note:** ICAO coverage is a curated table of 281 major airports, not the
+> full ICAO register. An unmapped 4-letter code fails with a message saying
+> so — fall back to the 3-letter IATA code.
 
 > **Note:** with several origins or destinations, the shareable top-level
 > `booking_url` can only encode one route, so it uses the first origin and
@@ -228,6 +236,9 @@ fli dates JFK,LGA LHR
 # (Note: `--leg` uses the comma as a FIELD separator — ORIGIN,DEST,DATE — so
 #  multi-airport legs are not supported here.)
 fli multi --leg SEA,HKG,2026-12-26 --leg PEK,SEA,2027-01-02
+
+# Legs accept ICAO codes too
+fli multi --leg KSEA,VHHH,2026-12-26 --leg ZBAA,KSEA,2027-01-02
 
 # Three-leg multi-city trip with filters
 fli multi \

@@ -60,6 +60,13 @@ Add this configuration to your `claude_desktop_config.json`:
 
 ## Available Tools
 
+!!! note "Airport codes"
+    Every `origin` / `destination` slot accepts 3-letter IATA codes (`JFK`) and
+    4-letter ICAO codes (`KJFK`), and the two can be mixed within one
+    comma-separated list. ICAO coverage is a curated table of 281 major
+    airports rather than the full ICAO register; an unmapped 4-letter code
+    fails with an error saying so, and the IATA code always works.
+
 ### `search_flights`
 
 Search for flights between two airports on a specific date.
@@ -68,8 +75,8 @@ Search for flights between two airports on a specific date.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `origin` | string | Yes | - | Departure airport IATA code (e.g., 'JFK') |
-| `destination` | string | Yes | - | Arrival airport IATA code (e.g., 'LHR') |
+| `origin` | string | Yes | - | Departure airport IATA or ICAO code (e.g., 'JFK') |
+| `destination` | string | Yes | - | Arrival airport IATA or ICAO code (e.g., 'LHR') |
 | `departure_date` | string | Yes | - | Travel date in YYYY-MM-DD format |
 | `return_date` | string | No | null | Return date for round trips |
 | `cabin_class` | string | No | ECONOMY | ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST |
@@ -134,8 +141,8 @@ Find the cheapest travel dates between two airports within a date range.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `origin` | string | Yes | - | Departure airport IATA code (e.g., 'JFK') |
-| `destination` | string | Yes | - | Arrival airport IATA code (e.g., 'LHR') |
+| `origin` | string | Yes | - | Departure airport IATA or ICAO code (e.g., 'JFK') |
+| `destination` | string | Yes | - | Arrival airport IATA or ICAO code (e.g., 'LHR') |
 | `start_date` | string | Yes | - | Start of date range in YYYY-MM-DD format |
 | `end_date` | string | Yes | - | End of date range in YYYY-MM-DD format |
 | `trip_duration` | int | No | 3 | Trip duration in days (for round-trips) |
@@ -202,8 +209,8 @@ find out where (and at what price) a specific flight can be booked.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `origin` | string | Yes | - | Departure airport IATA code (e.g., 'JFK') |
-| `destination` | string | Yes | - | Arrival airport IATA code (e.g., 'LHR') |
+| `origin` | string | Yes | - | Departure airport IATA or ICAO code (e.g., 'JFK') |
+| `destination` | string | Yes | - | Arrival airport IATA or ICAO code (e.g., 'LHR') |
 | `departure_date` | string | Yes | - | Travel date in YYYY-MM-DD format |
 | `flight_numbers` | list | No | null | Ordered flight numbers identifying the itinerary (e.g. `['BA178']`, or `['AA100', 'AA200']` round-trip). Bare (`'178'`) or airline-prefixed (`'BA178'`). Omit to price the top result. |
 | `return_date` | string | No | null | Return date for round trips |
@@ -283,8 +290,8 @@ The MCP server also provides prompt templates to help guide searches:
 Generates a tool call to find direct flights between two airports.
 
 **Arguments:**
-- `origin` - Departure airport IATA code (required)
-- `destination` - Arrival airport IATA code (required)
+- `origin` - Departure airport IATA or ICAO code (required)
+- `destination` - Arrival airport IATA or ICAO code (required)
 - `date` - Departure date in YYYY-MM-DD format (optional)
 - `prefer_non_stop` - Set to true to prefer nonstop flights (optional)
 
@@ -293,8 +300,8 @@ Generates a tool call to find direct flights between two airports.
 Suggests the cheapest travel dates for a route within a flexible window.
 
 **Arguments:**
-- `origin` - Departure airport IATA code (required)
-- `destination` - Arrival airport IATA code (required)
+- `origin` - Departure airport IATA or ICAO code (required)
+- `destination` - Arrival airport IATA or ICAO code (required)
 - `start_date` - Start of the travel window (optional)
 - `end_date` - End of the travel window (optional)
 - `duration` - Desired trip length in days (optional)
