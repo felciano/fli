@@ -264,3 +264,24 @@ class TestResolveAirportsICAO:
         with pytest.raises(ParseError) as exc:
             resolve_airports("KJFK,ZZZZ", label="origin")
         assert "Invalid origin airport code: 'ZZZZ'" in str(exc.value)
+
+
+class TestICAODataCorrectness:
+    """Guard the mapping's data, not just its plumbing.
+
+    A wrong target is the worst failure mode here: it resolves successfully
+    and silently searches the wrong airport, which is exactly the bug class
+    the enum de-aliasing work removed.
+    """
+
+    def test_rand_airport_is_keyed_by_its_own_icao(self):
+        """Rand Airport is FAGM. FAJS is a retired O. R. Tambo code."""
+        assert resolve_airport("FAGM") is Airport.QRA
+
+    def test_retired_or_tambo_code_does_not_resolve_to_a_different_airport(self):
+        """FAJS must never silently mean Rand Airport."""
+        with pytest.raises(ParseError):
+            resolve_airport("FAJS")
+
+    def test_or_tambo_resolves_from_its_current_icao(self):
+        assert resolve_airport("FAOR") is Airport.JNB

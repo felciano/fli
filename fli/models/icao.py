@@ -265,7 +265,7 @@ ICAO_TO_IATA: dict[str, str] = {
     "FAOR": "JNB",
     "FACT": "CPT",
     "FALE": "DUR",
-    "FAJS": "QRA",
+    "FAGM": "QRA",
     "HKJK": "NBO",
     "HKMO": "MBA",
     "HAAB": "ADD",
