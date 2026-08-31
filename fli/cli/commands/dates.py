@@ -25,6 +25,7 @@ from fli.core import (
     parse_cabin_class,
     parse_max_stops,
     resolve_airports,
+    resolve_duration_sweep,
 )
 from fli.core.parsers import ParseError
 from fli.models import (
@@ -92,13 +93,33 @@ def dates(
         datetime.now() + timedelta(days=60)
     ).strftime("%Y-%m-%d"),
     trip_duration: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--duration",
             "-d",
-            help="Trip duration in days",
+            help="Fixed trip duration in days for round trips (default: 3)",
+            min=1,
         ),
-    ] = 3,
+    ] = None,
+    min_duration: Annotated[
+        int | None,
+        typer.Option(
+            "--min-duration",
+            help=("Shortest trip duration to sweep, in days. Requires --round and --max-duration."),
+            min=1,
+        ),
+    ] = None,
+    max_duration: Annotated[
+        int | None,
+        typer.Option(
+            "--max-duration",
+            help=(
+                "Longest trip duration to sweep, in days. Each extra duration "
+                "re-searches the whole date range, so wide sweeps are capped."
+            ),
+            min=1,
+        ),
+    ] = None,
     airlines: Annotated[
         list[str] | None,
         typer.Option(
@@ -311,6 +332,11 @@ def dates(
         fli dates LAX MIA --alliance ONEWORLD --currency EUR
         fli dates LAX MIA --exclude-airlines DL --max-layover 240
         fli dates JFK,LGA LHR
+        fli dates LAX MIA --round --min-duration 4 --max-duration 7
+
+    --min-duration/--max-duration search every trip length in the range, so the
+    request count is (trip lengths x departure dates). That product is capped;
+    narrow the trip lengths or the date range if the command refuses to run.
 
     """
     try:
@@ -324,6 +350,22 @@ def dates(
         origin_airports = resolve_airports(origin, label="origin")
         destination_airports = resolve_airports(destination, label="destination")
         trip_type = TripType.ROUND_TRIP if is_round_trip else TripType.ONE_WAY
+
+        # Resolve --duration / --min-duration / --max-duration into the list
+        # of trip lengths to search. This also rejects contradictory options
+        # and caps the sweep's request volume, before anything hits the wire.
+        durations = resolve_duration_sweep(
+            trip_duration=trip_duration,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            is_round_trip=is_round_trip,
+            days_in_range=(
+                datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")
+            ).days
+            + 1,
+        )
+        effective_duration = durations[0]
+
         stops = parse_max_stops(max_stops)
         seat_type = parse_cabin_class(cabin_class)
         parsed_airlines = parse_airlines(airlines)
@@ -345,6 +387,8 @@ def dates(
             "start_date": start_date,
             "end_date": end_date,
             "trip_duration": trip_duration,
+            "min_duration": min_duration,
+            "max_duration": max_duration,
             "is_round_trip": is_round_trip,
             "cabin_class": seat_type.name,
             "max_stops": stops.name,
@@ -380,7 +424,7 @@ def dates(
             origin=origin_airports,
             destination=destination_airports,
             start_date=start_date,
-            trip_duration=trip_duration,
+            trip_duration=effective_duration,
             is_round_trip=is_round_trip,
             time_restrictions=time_restrictions,
         )
@@ -415,17 +459,26 @@ def dates(
             layover_restrictions=layover_restrictions,
             from_date=start_date,
             to_date=end_date,
-            duration=trip_duration if trip_type == TripType.ROUND_TRIP else None,
+            duration=effective_duration if trip_type == TripType.ROUND_TRIP else None,
         )
 
         # Perform search; pass currency/language/country through as URL params.
         search_client = SearchDates()
-        results = search_client.search(
-            filters,
-            currency=currency,
-            language=language,
-            country=country,
-        )
+        if len(durations) > 1:
+            results = search_client.search_durations(
+                filters,
+                durations,
+                currency=currency,
+                language=language,
+                country=country,
+            )
+        else:
+            results = search_client.search(
+                filters,
+                currency=currency,
+                language=language,
+                country=country,
+            )
 
         if not results:
             results = []
@@ -498,6 +551,8 @@ def dates(
                         "start_date": start_date,
                         "end_date": end_date,
                         "trip_duration": trip_duration,
+                        "min_duration": min_duration,
+                        "max_duration": max_duration,
                         "is_round_trip": is_round_trip,
                         "cabin_class": cabin_class,
                         "max_stops": max_stops,
@@ -557,6 +612,8 @@ def dates(
                         "start_date": start_date,
                         "end_date": end_date,
                         "trip_duration": trip_duration,
+                        "min_duration": min_duration,
+                        "max_duration": max_duration,
                         "is_round_trip": is_round_trip,
                         "cabin_class": cabin_class,
                         "max_stops": max_stops,

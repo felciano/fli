@@ -6,11 +6,14 @@ the CLI and MCP interfaces.
 
 from .airports import search_airports
 from .builders import (
+    DEFAULT_TRIP_DURATION,
+    MAX_DURATION_SWEEP_COMBINATIONS,
     build_date_search_segments,
     build_flight_segments,
     build_multi_city_segments,
     build_time_restrictions,
     normalize_date,
+    resolve_duration_sweep,
 )
 from .currency import extract_currency_from_price_token, format_price, format_price_axis_label
 from .links import google_flights_url, with_locale_params
@@ -47,6 +50,9 @@ __all__ = [
     "build_multi_city_segments",
     "build_time_restrictions",
     "normalize_date",
+    "resolve_duration_sweep",
+    "DEFAULT_TRIP_DURATION",
+    "MAX_DURATION_SWEEP_COMBINATIONS",
     "search_airports",
     # Currency
     "extract_currency_from_price_token",

@@ -145,7 +145,9 @@ Find the cheapest travel dates between two airports within a date range.
 | `destination` | string | Yes | - | Arrival airport IATA or ICAO code (e.g., 'LHR') |
 | `start_date` | string | Yes | - | Start of date range in YYYY-MM-DD format |
 | `end_date` | string | Yes | - | End of date range in YYYY-MM-DD format |
-| `trip_duration` | int | No | 3 | Trip duration in days (for round-trips) |
+| `trip_duration` | int | No | null | Fixed trip duration in days for round-trips; the effective default is 3 |
+| `min_duration` | int | No | null | Shortest trip duration to sweep (requires `max_duration` and `is_round_trip`) |
+| `max_duration` | int | No | null | Longest trip duration to sweep (requires `min_duration` and `is_round_trip`) |
 | `is_round_trip` | bool | No | false | Search for round-trip flights |
 | `cabin_class` | string | No | ECONOMY | ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST |
 | `max_stops` | string | No | ANY | ANY, NON_STOP, ONE_STOP, or TWO_PLUS_STOPS |

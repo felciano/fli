@@ -8,6 +8,97 @@ from datetime import datetime, timedelta
 
 from fli.models import Airport, FlightSegment, TimeRestrictions, TripType
 
+#: Trip length used for a round-trip search that names no duration at all.
+DEFAULT_TRIP_DURATION = 3
+
+#: Ceiling on ``len(durations) * days_in_range`` for one duration sweep.
+#:
+#: Since the search transport moved to the public search page, every
+#: (duration, departure date) pair costs its own page fetch, and the shared
+#: client drains at 10 requests/second. 600 combinations is roughly a minute
+#: of sustained traffic — enough for a useful sweep (e.g. 4-7 nights across a
+#: 60-day window is 240) and far short of the tens of thousands an unbounded
+#: range would issue.
+MAX_DURATION_SWEEP_COMBINATIONS = 600
+
+
+def resolve_duration_sweep(
+    *,
+    trip_duration: int | None,
+    min_duration: int | None,
+    max_duration: int | None,
+    is_round_trip: bool,
+    days_in_range: int,
+) -> list[int | None]:
+    """Resolve the trip lengths a date search should sweep.
+
+    Owns every rule governing ``--duration`` against
+    ``--min-duration``/``--max-duration`` so the CLI and the MCP tool cannot
+    drift apart, and refuses a sweep whose request volume would be abusive
+    before any network call is made.
+
+    Args:
+        trip_duration: Explicit fixed trip length, or None when unset.
+        min_duration: Shortest trip length to sweep, or None.
+        max_duration: Longest trip length to sweep, or None.
+        is_round_trip: Whether the search is a round trip.
+        days_in_range: Number of departure dates in the search range,
+            used to estimate the sweep's request count.
+
+    Returns:
+        The trip lengths to search, in ascending order. ``[None]`` for a
+        one-way search; a single-element list when no sweep was requested.
+
+    Raises:
+        ParseError: If the duration options contradict each other, or if the
+            sweep would exceed :data:`MAX_DURATION_SWEEP_COMBINATIONS`.
+
+    """
+    from fli.core.parsers import ParseError
+
+    if min_duration is None and max_duration is None:
+        if not is_round_trip:
+            return [None]
+        return [trip_duration if trip_duration is not None else DEFAULT_TRIP_DURATION]
+
+    if min_duration is None or max_duration is None:
+        raise ParseError(
+            "--min-duration / min_duration and --max-duration / max_duration must be "
+            "given together. An open-ended range would sweep every trip length that "
+            "fits the date range and issue thousands of searches."
+        )
+
+    if trip_duration is not None:
+        raise ParseError(
+            "Cannot combine --duration / trip_duration with --min-duration / "
+            "--max-duration. Use --duration for one fixed trip length, or the "
+            "min/max pair to sweep a range of trip lengths."
+        )
+
+    if not is_round_trip:
+        raise ParseError(
+            "--min-duration / --max-duration sweep round-trip lengths, so they need "
+            "--round / is_round_trip. A one-way search has no trip duration."
+        )
+
+    if min_duration > max_duration:
+        raise ParseError(
+            f"--min-duration / min_duration ({min_duration}) cannot exceed "
+            f"--max-duration / max_duration ({max_duration})."
+        )
+
+    durations = list(range(min_duration, max_duration + 1))
+    combinations = len(durations) * max(days_in_range, 0)
+    if combinations > MAX_DURATION_SWEEP_COMBINATIONS:
+        raise ParseError(
+            f"That sweep would issue about {combinations} searches "
+            f"({len(durations)} trip lengths x {days_in_range} departure dates), over "
+            f"the {MAX_DURATION_SWEEP_COMBINATIONS} limit. Narrow the trip lengths "
+            f"(--min-duration / --max-duration) or the date range (--from / --to)."
+        )
+
+    return durations
+
 
 def normalize_date(date_str: str) -> str:
     """Normalize a date string to zero-padded YYYY-MM-DD format.
@@ -192,7 +283,8 @@ def build_date_search_segments(
     if is_round_trip:
         trip_type = TripType.ROUND_TRIP
         return_date = (
-            datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=trip_duration or 3)
+            datetime.strptime(start_date, "%Y-%m-%d")
+            + timedelta(days=trip_duration or DEFAULT_TRIP_DURATION)
         ).strftime("%Y-%m-%d")
 
         segments.append(

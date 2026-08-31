@@ -103,6 +103,69 @@ class SearchDates:
                 all_results.extend(r)
         return all_results if all_results else None
 
+    def search_durations(
+        self,
+        filters: DateSearchFilters,
+        durations: list[int | None],
+        *,
+        currency: str | None = None,
+        language: str | None = None,
+        country: str | None = None,
+    ) -> list[DatePrice] | None:
+        """Search the same date range once per trip length and merge the results.
+
+        Args:
+            filters: Search parameters. Left untouched — each trip length is
+                searched through its own deep copy.
+            durations: Trip lengths in days, as returned by
+                :func:`fli.core.builders.resolve_duration_sweep`. A list of
+                one (including ``[None]``) delegates straight to
+                :meth:`search`.
+            currency: Optional ISO 4217 currency code to bill prices in.
+            language: Optional BCP-47 language code passed via the ``hl`` URL param.
+            country: Optional ISO 3166-1 alpha-2 code passed via the ``gl`` URL param.
+
+        Returns:
+            One DatePrice per (departure date, return date) pair, cheapest
+            price per pair, ordered by departure date then price. None when
+            no trip length yielded a result.
+
+        Notes:
+            The trip lengths are searched **sequentially**. ``_search_chunk``
+            already fans its dates out over the single shared worker pool, so
+            a second level of ``parallel_map`` here would starve that pool and
+            deadlock. Nothing is lost: the shared 10 req/sec rate limiter, not
+            the worker count, sets the wall clock. Each trip length costs a
+            full sweep of the date range, which is why
+            :func:`resolve_duration_sweep` caps the combination count before
+            any of this runs.
+
+        """
+        if len(durations) <= 1:
+            return self.search(filters, currency=currency, language=language, country=country)
+
+        merged: dict[tuple, DatePrice] = {}
+        for duration in durations:
+            variant = filters.model_copy(deep=True)
+            variant.duration = duration
+            if duration is not None and len(variant.flight_segments) > 1:
+                outbound = variant.flight_segments[0].parsed_travel_date
+                variant.flight_segments[1].travel_date = (
+                    outbound + timedelta(days=duration)
+                ).strftime("%Y-%m-%d")
+
+            results = self.search(variant, currency=currency, language=language, country=country)
+            for result in results or []:
+                key = tuple(result.date)
+                # Return date is departure + duration, so two trip lengths
+                # cannot actually collide. Cheap defence in case they ever do.
+                if key not in merged or result.price < merged[key].price:
+                    merged[key] = result
+
+        if not merged:
+            return None
+        return sorted(merged.values(), key=lambda r: (r.date[0], r.price))
+
     def _build_chunk_filters(
         self,
         filters: DateSearchFilters,

@@ -139,7 +139,10 @@ Find cheapest travel dates within a range.
 **Key Parameters:**
 - `origin` / `destination` - Airport IATA or ICAO codes
 - `start_date` / `end_date` - Date range in YYYY-MM-DD format
-- `trip_duration` - Number of days for round trips
+- `trip_duration` - Fixed number of days for round trips (unset means 3)
+- `min_duration` / `max_duration` - Sweep a *range* of trip lengths instead of
+  one fixed length. Must be given together, require `is_round_trip`, and cannot
+  be combined with `trip_duration`.
 - `is_round_trip` - Boolean for round-trip search
 - `cabin_class`, `max_stops`, `departure_window`, `airlines` - Same as above
 - `passengers`, `children`, `infants_in_seat`, `infants_on_lap` - Same as above
@@ -148,7 +151,21 @@ Find cheapest travel dates within a range.
 - `sort_by_price` - Boolean to sort by price
 
 **Response:** Each date result carries a `booking_url` deep-linking to Google
-Flights for that specific date (and return date for round trips).
+Flights for that specific date (and return date for round trips). `duration`
+reports the effective fixed trip length, or `null` for a sweep, in which case
+`duration_range` carries `[min_duration, max_duration]`.
+
+**Duration sweeps and request volume.** Since the search transport moved to the
+public search page, every departure date costs its own page fetch. A sweep
+re-searches the whole date range once per trip length, so its cost is
+`(trip lengths x departure dates)`. `resolve_duration_sweep` in
+`fli/core/builders.py` caps that product at `MAX_DURATION_SWEEP_COMBINATIONS`
+(600, ~1 minute at the client's 10 req/sec limit) and refuses a wider sweep
+before any network call. The trip lengths are searched **sequentially** —
+`_search_chunk` already fans its dates out over the single shared worker pool,
+so a second level of `parallel_map` would deadlock it. Sweep results are always
+ordered cheapest first, so `max_results` truncation keeps the cheapest
+itineraries rather than an arbitrary slice of sweep order.
 
 ### `get_booking_options`
 Get bookable fares (vendor names, prices, and direct booking URLs) for a

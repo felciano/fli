@@ -87,7 +87,9 @@ The MCP server provides two main tools:
 | `destination`       | string | Arrival airport IATA or ICAO code(s) — comma-separated for multi    |
 | `start_date`        | string | Start of date range in YYYY-MM-DD format                    |
 | `end_date`          | string | End of date range in YYYY-MM-DD format                      |
-| `trip_duration`     | int    | Trip duration in days (for round-trips)                     |
+| `trip_duration`     | int    | Fixed trip duration in days for round-trips (default 3)     |
+| `min_duration`      | int    | Shortest trip duration to sweep (with `max_duration`)       |
+| `max_duration`      | int    | Longest trip duration to sweep (with `min_duration`)        |
 | `is_round_trip`     | bool   | Whether to search for round-trip flights                    |
 | `cabin_class`       | string | ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST                |
 | `max_stops`         | string | ANY, NON_STOP, ONE_STOP, or TWO_PLUS_STOPS                  |
@@ -281,7 +283,9 @@ fli multi \
 |-------------------------|--------------------------------------------|--------------------------|
 | `--from`                | Start date                                 | `2026-01-01`             |
 | `--to`                  | End date                                   | `2026-02-01`             |
-| `--duration, -d`        | Trip duration in days                      | `3`                      |
+| `--duration, -d`        | Fixed trip duration in days (default `3`)  | `3`                      |
+| `--min-duration`        | Shortest trip duration to sweep            | `4`                      |
+| `--max-duration`        | Longest trip duration to sweep             | `7`                      |
 | `--round, -R`           | Round-trip search                          | (flag)                   |
 | `--airlines, -a`        | Airline IATA codes                         | `BA,KL`                  |
 | `--exclude-airlines, -A`| Airline IATA codes to **exclude**          | `DL,B6`                  |
@@ -302,6 +306,21 @@ fli multi \
 | `--sort`                | Sort by price                              | (flag)                   |
 | `--[day]`               | Day filters                                | `--monday`, `--friday`   |
 | `--format`              | Output format                              | `text`, `json`           |
+
+**Sweeping a range of trip lengths.** `--min-duration` and `--max-duration`
+answer "what is the cheapest 4-7 night trip?" in one command:
+
+```bash
+fli dates LAX MIA --round --min-duration 4 --max-duration 7
+```
+
+They must be given together, require `--round`, and cannot be combined with
+`--duration`. Each trip length re-searches the whole date range, and every
+departure date costs its own request against Google, so the sweep's size is
+`(trip lengths x departure dates)`. That product is capped at 600 — roughly a
+minute of traffic at the client's 10 requests/second limit. A wider sweep is
+refused up front with the estimate and the two knobs to narrow (`--min-duration`
+/ `--max-duration`, or `--from` / `--to`).
 
 #### Multi Command (`fli multi`)
 

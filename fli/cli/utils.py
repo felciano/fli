@@ -562,9 +562,18 @@ def display_date_results(
     # Sort dates chronologically for proper trend visualization
     sorted_dates = sorted(dates, key=lambda x: x.date[0])
 
-    # Extract data for chart
-    date_labels = [d.date[0].strftime("%m/%d") for d in sorted_dates]
-    prices = [d.price for d in sorted_dates]
+    # Extract data for chart. A duration sweep returns one row per
+    # (departure date, trip length), so the same departure date repeats and
+    # plotting every row turns the trend into a sawtooth over one day. Collapse
+    # the series to the cheapest price per departure date — the table below
+    # still lists every row. This is a no-op for a single-duration search.
+    cheapest_per_day: dict[Any, float] = {}
+    for d in sorted_dates:
+        day = d.date[0].date()
+        if day not in cheapest_per_day or d.price < cheapest_per_day[day]:
+            cheapest_per_day[day] = d.price
+    date_labels = [day.strftime("%m/%d") for day in cheapest_per_day]
+    prices = list(cheapest_per_day.values())
 
     # Render sparkline chart
     plt.clear_figure()

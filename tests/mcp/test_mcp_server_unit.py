@@ -595,3 +595,152 @@ class TestExecuteBookingOptions:
         assert "booking_url" in result
         assert "note" in result
         assert "booking_url" in result["note"]
+
+
+class TestDateSearchDurationSweep:
+    """``_execute_date_search`` fans a min/max range out over trip lengths."""
+
+    @staticmethod
+    def _params(**kwargs):
+        from datetime import datetime, timedelta
+
+        from fli.mcp.server import DateSearchParams
+
+        defaults = {
+            "origin": "JFK",
+            "destination": "LHR",
+            "start_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+            "end_date": (datetime.now() + timedelta(days=40)).strftime("%Y-%m-%d"),
+            "is_round_trip": True,
+        }
+        defaults.update(kwargs)
+        return DateSearchParams(**defaults)
+
+    @staticmethod
+    def _date_price(departure_offset: int, nights: int, price: float):
+        from datetime import datetime, timedelta
+
+        from fli.search.dates import DatePrice
+
+        departure = datetime.now() + timedelta(days=30 + departure_offset)
+        return DatePrice(date=(departure, departure + timedelta(days=nights)), price=price)
+
+    def test_default_round_trip_duration_is_three(self, monkeypatch):
+        """The schema default flipped to null; the wire-visible default did not."""
+        from fli.mcp.server import _execute_date_search
+
+        seen = {}
+
+        def _fake_search(self, filters, **kwargs):
+            seen["duration"] = filters.duration
+            return [TestDateSearchDurationSweep._date_price(0, 3, 100.0)]
+
+        monkeypatch.setattr("fli.mcp.server.SearchDates.search", _fake_search)
+        result = _execute_date_search(self._params())
+        assert result["success"] is True
+        assert result["duration"] == 3
+        assert seen["duration"] == 3
+
+    def test_sweep_calls_search_durations(self, monkeypatch):
+        from fli.mcp.server import _execute_date_search
+
+        calls = []
+
+        def _fake_sweep(self, filters, durations, **kwargs):
+            calls.append(durations)
+            return [TestDateSearchDurationSweep._date_price(0, n, 100.0 + n) for n in durations]
+
+        monkeypatch.setattr("fli.mcp.server.SearchDates.search_durations", _fake_sweep)
+        result = _execute_date_search(self._params(min_duration=4, max_duration=6))
+
+        assert result["success"] is True
+        assert calls == [[4, 5, 6]]
+        assert result["duration"] is None
+        assert result["duration_range"] == [4, 6]
+
+    def test_sweep_requires_a_round_trip(self):
+        from fli.mcp.server import _execute_date_search
+
+        result = _execute_date_search(
+            self._params(is_round_trip=False, min_duration=4, max_duration=6)
+        )
+        assert result["success"] is False
+        assert "round" in result["error"].lower()
+        # ParseError must be caught by its own handler, not the catch-all.
+        assert not result["error"].startswith("Search failed:")
+
+    def test_sweep_rejects_an_explicit_trip_duration(self):
+        from fli.mcp.server import _execute_date_search
+
+        result = _execute_date_search(self._params(trip_duration=5, min_duration=4, max_duration=6))
+        assert result["success"] is False
+        assert "Cannot combine" in result["error"]
+
+    def test_sweep_over_the_cap_is_refused_before_searching(self, monkeypatch):
+        from datetime import datetime, timedelta
+
+        from fli.core.builders import MAX_DURATION_SWEEP_COMBINATIONS
+        from fli.mcp.server import _execute_date_search
+
+        def _explode(*args, **kwargs):
+            raise AssertionError("the cap must be enforced before any network call")
+
+        monkeypatch.setattr("fli.mcp.server.SearchDates.search_durations", _explode)
+        monkeypatch.setattr("fli.mcp.server.SearchDates.search", _explode)
+
+        result = _execute_date_search(
+            self._params(
+                end_date=(datetime.now() + timedelta(days=90)).strftime("%Y-%m-%d"),
+                min_duration=1,
+                max_duration=30,
+            )
+        )
+        assert result["success"] is False
+        assert str(MAX_DURATION_SWEEP_COMBINATIONS) in result["error"]
+
+    def test_sweep_truncation_keeps_the_cheapest_rows(self, monkeypatch):
+        """Truncating a durations x days list in sweep order is arbitrary."""
+        from fli.mcp.server import CONFIG, _execute_date_search
+
+        def _fake_sweep(self, filters, durations, **kwargs):
+            # Deliberately not price-ordered: expensive rows come first.
+            return [
+                TestDateSearchDurationSweep._date_price(0, 4, 900.0),
+                TestDateSearchDurationSweep._date_price(1, 5, 800.0),
+                TestDateSearchDurationSweep._date_price(2, 6, 700.0),
+                TestDateSearchDurationSweep._date_price(3, 4, 100.0),
+                TestDateSearchDurationSweep._date_price(4, 5, 200.0),
+                TestDateSearchDurationSweep._date_price(5, 6, 300.0),
+            ]
+
+        monkeypatch.setattr("fli.mcp.server.SearchDates.search_durations", _fake_sweep)
+        monkeypatch.setattr(CONFIG, "max_results", 3)
+
+        result = _execute_date_search(
+            self._params(min_duration=4, max_duration=6, sort_by_price=False)
+        )
+        assert result["success"] is True
+        assert [row["price"] for row in result["dates"]] == [100.0, 200.0, 300.0]
+
+    def test_tool_wrapper_forwards_the_sweep_bounds(self, monkeypatch):
+        """Easy to add to the signature and forget in the constructor call."""
+        from datetime import datetime, timedelta
+
+        from fli.mcp import server
+
+        captured = {}
+        monkeypatch.setattr(
+            server, "_execute_date_search", lambda params: captured.setdefault("p", params) or {}
+        )
+        server.search_dates(
+            origin="JFK",
+            destination="LHR",
+            start_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+            end_date=(datetime.now() + timedelta(days=40)).strftime("%Y-%m-%d"),
+            is_round_trip=True,
+            min_duration=4,
+            max_duration=6,
+        )
+        assert captured["p"].min_duration == 4
+        assert captured["p"].max_duration == 6
+        assert captured["p"].trip_duration is None

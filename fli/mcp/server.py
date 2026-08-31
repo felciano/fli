@@ -28,6 +28,7 @@ from fli.core import (
     parse_max_stops,
     parse_sort_by,
     resolve_airports,
+    resolve_duration_sweep,
     search_airports,
 )
 from fli.core.parsers import ParseError
@@ -204,8 +205,29 @@ class DateSearchParams(BaseModel):
     )
     start_date: str = Field(description="Start of date range in YYYY-MM-DD format")
     end_date: str = Field(description="End of date range in YYYY-MM-DD format")
-    trip_duration: int = Field(
-        3, ge=1, description="Trip duration in days (for round-trip searches)"
+    trip_duration: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "Fixed trip duration in days for round-trip searches. Defaults to 3 when "
+            "unset; leave unset to use min_duration/max_duration instead."
+        ),
+    )
+    min_duration: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "Shortest trip duration in days to sweep. Requires is_round_trip and "
+            "max_duration, and cannot be combined with trip_duration."
+        ),
+    )
+    max_duration: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "Longest trip duration in days to sweep. Every duration in the range "
+            "re-searches the whole date range, so wide sweeps are refused."
+        ),
     )
     is_round_trip: bool = Field(False, description="Search for round-trip flights")
     airlines: list[str] | None = Field(
@@ -820,6 +842,23 @@ def _execute_date_search(params: DateSearchParams) -> dict[str, Any]:
         alliances = parse_alliances(params.alliance)
         alliances_exclude = parse_alliances(params.exclude_alliance)
 
+        # Resolve trip_duration / min_duration / max_duration into the trip
+        # lengths to search. Rejects contradictory combinations and caps the
+        # sweep's request volume before anything reaches the network.
+        durations = resolve_duration_sweep(
+            trip_duration=params.trip_duration,
+            min_duration=params.min_duration,
+            max_duration=params.max_duration,
+            is_round_trip=params.is_round_trip,
+            days_in_range=(
+                datetime.strptime(params.end_date, "%Y-%m-%d")
+                - datetime.strptime(params.start_date, "%Y-%m-%d")
+            ).days
+            + 1,
+        )
+        effective_duration = durations[0]
+        is_sweep = len(durations) > 1
+
         # Build time restrictions
         departure_window = params.departure_window or CONFIG.default_departure_window
         time_restrictions = build_time_restrictions(departure_window) if departure_window else None
@@ -829,7 +868,7 @@ def _execute_date_search(params: DateSearchParams) -> dict[str, Any]:
             origin=origins,
             destination=destinations,
             start_date=params.start_date,
-            trip_duration=params.trip_duration,
+            trip_duration=effective_duration,
             is_round_trip=params.is_round_trip,
             time_restrictions=time_restrictions,
         )
@@ -862,18 +901,27 @@ def _execute_date_search(params: DateSearchParams) -> dict[str, Any]:
             layover_restrictions=layover_restrictions,
             from_date=params.start_date,
             to_date=params.end_date,
-            duration=params.trip_duration if params.is_round_trip else None,
+            duration=effective_duration if params.is_round_trip else None,
         )
 
         # Perform search
         currency = parse_currency(params.currency)
         search_client = SearchDates()
-        dates = search_client.search(
-            filters,
-            currency=currency,
-            language=params.language,
-            country=params.country,
-        )
+        if is_sweep:
+            dates = search_client.search_durations(
+                filters,
+                durations,
+                currency=currency,
+                language=params.language,
+                country=params.country,
+            )
+        else:
+            dates = search_client.search(
+                filters,
+                currency=currency,
+                language=params.language,
+                country=params.country,
+            )
 
         if not dates:
             return {
@@ -884,7 +932,11 @@ def _execute_date_search(params: DateSearchParams) -> dict[str, Any]:
                 "date_range": f"{params.start_date} to {params.end_date}",
             }
 
-        if params.sort_by_price:
+        # A sweep returns (trip lengths x departure dates) rows, far more
+        # than max_results keeps. Sorting by price first makes the truncation
+        # keep the cheapest itineraries rather than an arbitrary slice of
+        # sweep order, so a sweep is always priced-ordered.
+        if params.sort_by_price or is_sweep:
             dates.sort(key=lambda x: x.price)
 
         # Serialize results
@@ -900,7 +952,10 @@ def _execute_date_search(params: DateSearchParams) -> dict[str, Any]:
             "count": len(date_results),
             "trip_type": trip_type.name,
             "date_range": f"{params.start_date} to {params.end_date}",
-            "duration": params.trip_duration if params.is_round_trip else None,
+            "duration": None
+            if is_sweep
+            else (effective_duration if params.is_round_trip else None),
+            "duration_range": [params.min_duration, params.max_duration] if is_sweep else None,
         }
 
     except ParseError as e:
@@ -1108,9 +1163,35 @@ def search_dates(
     start_date: Annotated[str, Field(description="Start of date range in YYYY-MM-DD format")],
     end_date: Annotated[str, Field(description="End of date range in YYYY-MM-DD format")],
     trip_duration: Annotated[
-        int,
-        Field(description="Trip duration in days for round-trips", ge=1),
-    ] = 3,
+        int | None,
+        Field(
+            description=(
+                "Fixed trip duration in days for round-trips (defaults to 3). Leave "
+                "unset to sweep a range with min_duration/max_duration instead."
+            ),
+            ge=1,
+        ),
+    ] = None,
+    min_duration: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Shortest trip duration in days to sweep. Requires is_round_trip and "
+                "max_duration; cannot be combined with trip_duration."
+            ),
+            ge=1,
+        ),
+    ] = None,
+    max_duration: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Longest trip duration in days to sweep. Each duration re-searches "
+                "the whole date range, so very wide sweeps are refused."
+            ),
+            ge=1,
+        ),
+    ] = None,
     is_round_trip: Annotated[
         bool,
         Field(description="Search for round-trip flights"),
@@ -1188,6 +1269,13 @@ def search_dates(
 
     Returns a list of dates with their prices, useful for flexible travel planning.
     Supports both one-way and round-trip searches.
+
+    Round trips can either fix one trip length with `trip_duration`, or sweep a
+    range with `min_duration` and `max_duration` (given together) to answer
+    questions like "cheapest 4-7 night trip". A sweep re-searches the whole date
+    range once per trip length, so the (trip lengths x departure dates) product
+    is capped; narrow either range if the call is refused. Sweep results are
+    always ordered cheapest first.
     """
     effective_departure_window = departure_window or CONFIG.default_departure_window
     params = DateSearchParams(
@@ -1196,6 +1284,8 @@ def search_dates(
         start_date=start_date,
         end_date=end_date,
         trip_duration=trip_duration,
+        min_duration=min_duration,
+        max_duration=max_duration,
         is_round_trip=is_round_trip,
         airlines=airlines,
         cabin_class=cabin_class,

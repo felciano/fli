@@ -431,3 +431,140 @@ def test_dates_blank_origin_reports_parse_error(runner, mock_search_dates, mock_
     assert result.exit_code == 1
     assert "No valid origin airport codes" in result.stdout
     assert "Traceback" not in result.stdout
+
+
+def _sweep_results():
+    """Return one DatePrice per trip length, all departing the same day."""
+    departure = datetime.now() + timedelta(days=1)
+    return [
+        DatePrice(date=(departure, departure + timedelta(days=nights)), price=price)
+        for nights, price in ((4, 499.0), (5, 399.0), (6, 599.0))
+    ]
+
+
+def test_dates_duration_sweep_calls_search_durations(runner, mock_search_dates, mock_console):
+    """A min/max range fans out over every duration in the range."""
+    mock_search_dates.search_durations.return_value = _sweep_results()
+    result = runner.invoke(
+        app,
+        ["dates", "JFK", "LAX", "--round", "--min-duration", "4", "--max-duration", "6"],
+    )
+    assert result.exit_code == 0
+    mock_search_dates.search_durations.assert_called_once()
+    args, _ = mock_search_dates.search_durations.call_args
+    assert args[1] == [4, 5, 6]
+    mock_search_dates.search.assert_not_called()
+
+
+def test_dates_without_sweep_flags_uses_plain_search(runner, mock_search_dates, mock_console):
+    """No sweep flags means the existing single-duration path, untouched."""
+    mock_search_dates.search.return_value = _sweep_results()[:1]
+    result = runner.invoke(app, ["dates", "JFK", "LAX", "--round"])
+    assert result.exit_code == 0
+    mock_search_dates.search.assert_called_once()
+    mock_search_dates.search_durations.assert_not_called()
+
+
+def test_dates_round_trip_default_duration_is_still_three(runner, mock_search_dates, mock_console):
+    """The sentinel default must not change the effective trip length."""
+    mock_search_dates.search.return_value = _sweep_results()[:1]
+    result = runner.invoke(app, ["dates", "JFK", "LAX", "--round"])
+    assert result.exit_code == 0
+    filters = mock_search_dates.search.call_args[0][0]
+    assert filters.duration == 3
+
+
+def test_dates_sweep_requires_round_trip(runner, mock_search_dates, mock_console):
+    """A one-way search has no trip duration to sweep."""
+    result = runner.invoke(
+        app, ["dates", "JFK", "LAX", "--min-duration", "4", "--max-duration", "6"]
+    )
+    assert result.exit_code == 1
+    assert "round" in result.stdout
+
+
+def test_dates_sweep_rejects_explicit_duration(runner, mock_search_dates, mock_console):
+    """``--duration`` and the sweep flags mean two different things."""
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--round",
+            "--duration",
+            "5",
+            "--min-duration",
+            "4",
+            "--max-duration",
+            "6",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Cannot combine" in result.stdout
+
+
+def test_dates_sweep_rejects_inverted_range(runner, mock_search_dates, mock_console):
+    result = runner.invoke(
+        app,
+        ["dates", "JFK", "LAX", "--round", "--min-duration", "7", "--max-duration", "3"],
+    )
+    assert result.exit_code == 1
+
+
+def test_dates_sweep_requires_both_bounds(runner, mock_search_dates, mock_console):
+    """An open-ended sweep would issue thousands of page fetches."""
+    result = runner.invoke(app, ["dates", "JFK", "LAX", "--round", "--min-duration", "4"])
+    assert result.exit_code == 1
+    assert "together" in result.stdout
+
+
+def test_dates_sweep_json_echoes_the_range(runner, mock_search_dates, mock_console):
+    """JSON output reports the sweep bounds and a null fixed duration."""
+    mock_search_dates.search_durations.return_value = _sweep_results()
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--round",
+            "--min-duration",
+            "4",
+            "--max-duration",
+            "6",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["query"]["min_duration"] == 4
+    assert payload["query"]["max_duration"] == 6
+    assert payload["query"]["trip_duration"] is None
+    returns = [entry["return_date"] for entry in payload["dates"]]
+    assert len(set(returns)) == 3
+
+
+def test_dates_sweep_json_error_payload_carries_the_range(runner, mock_search_dates, mock_console):
+    """Both error-path query dicts must echo the new flags too."""
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "NOPE",
+            "LAX",
+            "--round",
+            "--min-duration",
+            "4",
+            "--max-duration",
+            "6",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["success"] is False
+    assert payload["query"]["min_duration"] == 4
+    assert payload["query"]["max_duration"] == 6

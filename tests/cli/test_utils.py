@@ -617,3 +617,46 @@ def test_serialize_airport_leaves_unsuffixed_names_alone():
 def test_serialize_airline_strips_the_disambiguating_suffix():
     """Airlines share the same suffixing scheme as airports."""
     assert serialize_airline(Airline.W6) == {"code": "W6", "name": "Wizz Air"}
+
+
+def _plotted_series(dates, trip_type=TripType.ROUND_TRIP):
+    """Return the price series handed to the sparkline for ``dates``."""
+    plotted = []
+
+    with patch("fli.cli.utils.plt") as fake_plt, patch("fli.cli.utils.console"):
+        fake_plt.plot.side_effect = lambda prices, **kwargs: plotted.append(list(prices))
+        display_date_results(dates, trip_type)
+
+    assert plotted, "the price trend chart was never plotted"
+    return plotted[0]
+
+
+def test_price_trend_collapses_repeated_departure_dates():
+    """A duration sweep repeats each departure date once per trip length.
+
+    Plotting one point per row turns the trend into a sawtooth over the same
+    day. The chart series keeps the cheapest price per departure date; the
+    table below it still lists every row.
+    """
+    first = datetime.now() + timedelta(days=1)
+    second = first + timedelta(days=1)
+    dates = [
+        DatePrice(date=(first, first + timedelta(days=4)), price=500.0),
+        DatePrice(date=(first, first + timedelta(days=5)), price=300.0),
+        DatePrice(date=(second, second + timedelta(days=4)), price=700.0),
+        DatePrice(date=(second, second + timedelta(days=5)), price=650.0),
+    ]
+
+    assert _plotted_series(dates) == [300.0, 650.0]
+
+
+def test_price_trend_unchanged_without_repeated_departure_dates():
+    """The collapse is a no-op for every non-sweep call."""
+    first = datetime.now() + timedelta(days=1)
+    second = first + timedelta(days=1)
+    dates = [
+        DatePrice(date=(first, first + timedelta(days=4)), price=500.0),
+        DatePrice(date=(second, second + timedelta(days=4)), price=700.0),
+    ]
+
+    assert _plotted_series(dates) == [500.0, 700.0]
