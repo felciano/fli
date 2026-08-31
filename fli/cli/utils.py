@@ -160,10 +160,16 @@ def filter_dates_by_days(dates: list, days: list[DayOfWeek], trip_type: TripType
 
 
 def format_airport(airport: Airport) -> str:
-    """Format airport code and name (first two words)."""
-    name_parts = airport.value.split()[:3]  # Get first three words
-    name = " ".join(name_parts)
-    return f"{airport.name} ({name})"
+    """Format airport code and name (first three words).
+
+    Airports whose human name is shared with another airport carry a
+    disambiguating ``" (CODE)"`` suffix in the enum value. The code is
+    already the leading half of this string, so the suffix is stripped
+    rather than rendered twice (``"TRI (Tri-Cities Airport (TRI))"``).
+    """
+    name = airport.value.removesuffix(f" ({airport.name})")
+    name_parts = name.split()[:3]  # Get first three words
+    return f"{airport.name} ({' '.join(name_parts)})"
 
 
 def format_duration(minutes: int) -> str:

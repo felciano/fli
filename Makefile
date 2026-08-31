@@ -63,6 +63,14 @@ ci-docker:
 devcontainer:
 	docker build -t fli-dev -f .devcontainer/Dockerfile .
 
+# Regenerate the Airport/Airline enums from data/*.csv.
+# The generator emits repr() single quotes, so the format step is not
+# optional: skipping it turns a ~100-line data diff into ~16k lines of
+# quote churn.
+generate-enums:
+	uv run python scripts/generate_enums.py
+	uv run --extra dev ruff format fli/models/airport.py fli/models/airline.py
+
 # Generate the requirements.txt file
 requirements:
 	uv export --format requirements-txt --no-hashes > requirements.txt
@@ -109,8 +117,9 @@ help:
 	@echo "  make ci          - Run CI locally using act (requires Docker)"
 	@echo "  make ci-docker   - Run CI in Docker container"
 	@echo "  make devcontainer - Build dev container image"
+	@echo "  make generate-enums - Regenerate Airport/Airline enums from data/*.csv"
 	@echo "  make requirements - Generate the requirements.txt file"
 	@echo "  make bump-preview - Preview next version (patch/minor/major)"
 	@echo "  make release-notes - Preview release notes since last tag"
 # Declare the targets as phony
-.PHONY: help install install-dev install-all mcp mcp-http docs format lint lint-fix test test-mcp test-fuzz test-all ci ci-docker devcontainer requirements bump-preview release-notes
+.PHONY: help install install-dev install-all mcp mcp-http docs format lint lint-fix test test-mcp test-fuzz test-all ci ci-docker devcontainer generate-enums requirements bump-preview release-notes

@@ -223,3 +223,34 @@ class TestParseBookingChunk:
         assert len(result) == 2
         codes = {r.vendor_code for r in result}
         assert codes == {"AA", "UA"}
+
+
+class TestShadowedCodesResolve:
+    """Codes that used to be silent Enum aliases must decode, not disappear.
+
+    ``_AIRPORT_BY_CODE`` / ``_AIRLINE_BY_CODE`` are built by *iterating* the
+    enum, which skips aliases. An itinerary touching an aliased code therefore
+    raised ``AttributeError`` and the whole flight row was dropped from the
+    results — silent data loss rather than a visible error.
+    """
+
+    @pytest.mark.parametrize("code", ["OKA", "MLH", "NTL", "TRI"])
+    def test_parse_airport_resolves_shadowed_codes(self, code):
+        from fli.search._decoders import _parse_airport
+
+        assert _parse_airport(code).name == code
+
+    @pytest.mark.parametrize("code", ["W9", "Z0"])
+    def test_parse_airline_resolves_shadowed_codes(self, code):
+        from fli.search._decoders import _parse_airline
+
+        assert _parse_airline(code).name == code
+
+    def test_flight_row_with_shadowed_airport_is_not_dropped(self):
+        from fli.models import Airport
+        from fli.search.flights import SearchFlights
+        from tests.search.test_parse_flights_data import _leg, _row
+
+        row = _row(legs=[_leg(dep_iata="OKA", arr_iata="HND")])
+        flight = SearchFlights._parse_flights_data(row)
+        assert flight.legs[0].departure_airport is Airport.OKA

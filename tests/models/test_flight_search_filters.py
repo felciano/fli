@@ -668,3 +668,31 @@ def test_flight_search_filters(test_case):
     assert isinstance(encoded_filters, str) and len(encoded_filters) > 0
     if test_case["encoded"] is not None:
         assert encoded_filters == test_case["encoded"]
+
+
+def test_format_serializes_the_requested_airport_code():
+    """A search for OKA must ask Google for OKA, not the airport it aliased to.
+
+    ``format()`` serialises airports via ``Airport.name``. While duplicate
+    human names collapsed into Enum aliases, ``Airport.OKA`` *was*
+    ``Airport.NAH``, so the outgoing payload silently requested a different
+    airport in a different country.
+    """
+    import json
+
+    filters = FlightSearchFilters(
+        passenger_info=PassengerInfo(adults=1),
+        flight_segments=[
+            FlightSegment(
+                departure_airport=[[Airport.OKA, 0]],
+                arrival_airport=[[Airport.JFK, 0]],
+                travel_date=TRAVEL_DATE,
+            )
+        ],
+        stops=MaxStops.ANY,
+        seat_type=SeatType.ECONOMY,
+        sort_by=SortBy.CHEAPEST,
+    )
+    payload = json.dumps(filters.format())
+    assert '"OKA"' in payload
+    assert '"NAH"' not in payload

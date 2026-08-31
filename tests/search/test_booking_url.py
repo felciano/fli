@@ -231,3 +231,21 @@ class TestBuildFlightBookingUrl:
         client = _make_client()
         result = client.build_flight_booking_url(_one_way())
         assert isinstance(result, str)
+
+    def test_tfs_token_uses_requested_airport_code(self):
+        """A leg through OKA must encode 'OKA', not the code it aliased to."""
+        import base64
+
+        client = _make_client()
+        flight = FlightResult(
+            price=500.0,
+            duration=180,
+            stops=0,
+            legs=[_make_leg(Airline.NH, "1", Airport.OKA, Airport.HND, "2026-09-01")],
+        )
+        url = client.build_flight_booking_url(flight)
+        tfs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["tfs"][0]
+        pad = "=" * ((4 - len(tfs) % 4) % 4)
+        raw = base64.urlsafe_b64decode(tfs + pad)
+        assert b"OKA" in raw
+        assert b"NAH" not in raw

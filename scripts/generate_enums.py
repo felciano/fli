@@ -25,12 +25,77 @@ This is dramatically faster to import than the previous per-member
 running 7,883 metaclass-driven attribute assignments. The runtime API
 (``Airport.JFK``, ``isinstance``, Pydantic compat, ``__members__``,
 iteration) is identical to the previous form.
+
+Duplicate names
+---------------
+
+Because the dict *value* is the Enum member value, two codes sharing a
+human-readable name would become silent ``Enum`` **aliases** — the second
+code would resolve to the first member (``Airport.TRI is Airport.PSC``),
+so a search for Bristol TN would confidently return Pasco WA results.
+:func:`_disambiguate_names` therefore appends `` (CODE)`` to every member
+of a colliding name group, and the generated module wraps the enum in
+:func:`enum.unique` so a surviving alias fails loudly at import time
+instead of silently returning the wrong airport.
+
+The `` (CODE)`` suffix is deliberately **Python-only**. ``fli-js`` (see
+``fli-js/scripts/generate-enums.ts``) keys its enum by IATA code with the
+names in a separate record, so it is structurally immune to aliasing and
+must NOT receive the suffix — the two ``AIRPORT_NAMES`` maps differ for
+the colliding entries on purpose.
 """
 
 import csv
+from collections import Counter
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).parents[1].resolve()
+
+
+def _disambiguate_names(entries: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Append IATA codes to duplicate names so every Enum value is unique.
+
+    Python's ``Enum`` treats members with the same value as aliases — the
+    second silently becomes an alias for the first. This function detects
+    duplicate human-readable names and appends `` (CODE)`` to *all*
+    members of each duplicate group (including the first) so every entry
+    gets its own distinct Enum member. Suffixing the whole group (rather
+    than only the later members) keeps the output independent of CSV row
+    order.
+
+    Entries with unique names are left untouched. The raw IATA code is
+    used, not the sanitised Python identifier, so a digit-prefixed
+    airline renders as ``"Sabre (1S)"`` rather than ``"Sabre (_1S)"``.
+
+    Args:
+        entries: ``(iata_code, human_name)`` pairs in CSV order.
+
+    Returns:
+        The same pairs with colliding names made unique.
+
+    Raises:
+        ValueError: If names are still not unique afterwards — e.g. a
+            source name that already ends in a `` (XXX)`` suffix
+            colliding with a generated one. Failing at generation time
+            beats re-introducing a silent alias.
+
+    """
+    name_counts = Counter(name for _, name in entries)
+    duplicates = {name for name, count in name_counts.items() if count > 1}
+    if not duplicates:
+        return entries
+
+    result = [(code, f"{name} ({code})" if name in duplicates else name) for code, name in entries]
+
+    still_duplicated = sorted(
+        name for name, count in Counter(name for _, name in result).items() if count > 1
+    )
+    if still_duplicated:
+        raise ValueError(
+            "Names remain ambiguous after disambiguation — fix the source CSV: "
+            + ", ".join(still_duplicated)
+        )
+    return result
 
 
 def _sanitize_code(code: str, allow_digit_prefix: bool = False) -> str:
@@ -71,6 +136,15 @@ def _write_enum_module(
       Enum-member overhead, JSON dumping) can use it directly. The
       ``Enum`` stays the canonical type for typed APIs; the dict is the
       fast path.
+
+    The enum is wrapped in :func:`enum.unique`, which raises
+    ``ValueError`` at *import* time if any two members share a value.
+    That is a deliberate sharp edge: hand-editing the generated dict, or
+    refreshing ``data/airports.csv`` without re-running this script, will
+    break ``import fli`` outright rather than silently resolving one IATA
+    code to a different airport. The supported path — running this
+    script — always disambiguates first, so it cannot fire from normal
+    use.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     map_name = f"{enum_name.upper()}_NAMES"
@@ -84,7 +158,7 @@ def _write_enum_module(
             f"  for callers that want raw dict speed.\n"
         )
         fh.write('"""\n\n')
-        fh.write("from enum import Enum\n\n")
+        fh.write("from enum import Enum, unique\n\n")
         fh.write(
             "# A single dict literal — Python parses this in one pass.\n"
             "# Defining the same data as ``class <Enum>(Enum):`` members\n"
@@ -98,7 +172,13 @@ def _write_enum_module(
             fh.write(f"    {sanitized!r}: {name!r},\n")
         fh.write("}\n\n")
         fh.write(
-            f'{enum_name} = Enum({enum_name!r}, {map_name})\n{enum_name}.__doc__ = """{doc}"""\n'
+            "# ``unique`` rejects alias members: two codes sharing a value\n"
+            "# would make one silently resolve to the other. Regenerate with\n"
+            "# ``make generate-enums`` rather than editing this dict by hand.\n"
+        )
+        fh.write(
+            f"{enum_name} = unique(Enum({enum_name!r}, {map_name}))\n"
+            f'{enum_name}.__doc__ = """{doc}"""\n'
         )
 
 
@@ -116,6 +196,7 @@ def generate_airport_enum() -> None:
     except (KeyError, csv.Error) as e:
         raise ValueError(f"Error reading CSV file: {e}") from e
 
+    entries = _disambiguate_names(entries)
     _write_enum_module(
         out_path,
         enum_name="Airport",
@@ -159,6 +240,7 @@ def generate_airline_enum() -> None:
         ]
     )
 
+    entries = _disambiguate_names(entries)
     _write_enum_module(
         out_path,
         enum_name="Airline",

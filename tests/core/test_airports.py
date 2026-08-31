@@ -139,3 +139,33 @@ class TestAirportMatch:
         except Exception:
             return
         raise AssertionError("AirportMatch should reject score > 100")
+
+
+class TestShadowedCodesSearch:
+    """Search results must never report a code that disagrees with its name.
+
+    ``search_airports`` iterates the raw ``AIRPORT_NAMES`` dict but wraps hits
+    in ``Airport[code]``. While duplicate names collapsed into Enum aliases,
+    that produced self-contradictory rows: searching ``"TRI"`` returned the
+    ``PSC`` member carrying the Tri-Cities name, and ``"Tri-Cities"`` returned
+    ``PSC`` twice.
+    """
+
+    def test_exact_iata_match_returns_that_code(self):
+        results = search_airports("TRI")
+        assert results[0].code.name == "TRI"
+        assert results[0].match_type == "iata_exact"
+
+    def test_name_query_returns_every_airport_with_that_name(self):
+        """Airports sharing a name must all be reachable, not just the first."""
+        for query, expected in [
+            ("Tri-Cities", {"TRI", "PSC"}),
+            ("Naha", {"NAH", "OKA"}),
+            ("Newcastle", {"NCL", "NCS", "NTL"}),
+        ]:
+            codes = {m.code.name for m in search_airports(query, limit=25)}
+            assert expected <= codes, (query, sorted(codes))
+
+    def test_no_duplicate_codes_in_results(self):
+        codes = [m.code.name for m in search_airports("Tri-Cities", limit=25)]
+        assert len(codes) == len(set(codes))

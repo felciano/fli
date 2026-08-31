@@ -579,3 +579,18 @@ def test_serialize_flight_result_extracted_currency_takes_precedence():
     payload = serialize_flight_result(flight, default_currency="CAD")
 
     assert payload["currency"] == "GBP"
+
+
+def test_format_airport_uses_the_airports_own_code():
+    """A disambiguating ``(CODE)`` suffix must not leak into CLI output."""
+    from fli.cli.utils import format_airport
+    from fli.models import Airport
+
+    assert format_airport(Airport.TRI) == "TRI (Tri-Cities Airport)"
+
+
+def test_format_airport_unaffected_for_unique_names():
+    from fli.cli.utils import format_airport
+    from fli.models import Airport
+
+    assert format_airport(Airport.JFK) == "JFK (John F Kennedy)"
