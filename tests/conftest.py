@@ -28,3 +28,34 @@ def pytest_collection_modifyitems(config, items) -> None:
     elif not config.getoption("--all"):
         # Remove fuzz tests from normal runs
         items[:] = [item for item in items if not item.get_closest_marker("fuzz")]
+
+
+@pytest.fixture
+def tz_override():
+    """Run a test under a chosen ``TZ``, restoring the original afterwards.
+
+    The past-date validators can only compare against the clock of the machine
+    running them, so the bug they guard against (a server whose local date has
+    already rolled past the traveler's) only reproduces when the process
+    timezone differs from UTC. Yield a setter so a test can pick the offset it
+    needs, e.g. ``tz_override("Etc/GMT-14")`` for UTC+14.
+    """
+    import os
+    import time
+
+    if not hasattr(time, "tzset"):  # pragma: no cover - non-POSIX platforms
+        pytest.skip("time.tzset() is unavailable on this platform")
+
+    original = os.environ.get("TZ")
+
+    def _set(zone: str) -> None:
+        os.environ["TZ"] = zone
+        time.tzset()
+
+    yield _set
+
+    if original is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original
+    time.tzset()

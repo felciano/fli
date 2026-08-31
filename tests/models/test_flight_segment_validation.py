@@ -1,10 +1,15 @@
 """Tests for FlightSegment validation."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from fli.models import Airport, FlightSegment, TimeRestrictions
+
+
+def utc_today():
+    """Today's date in UTC - the anchor the validators reference."""
+    return datetime.now(timezone.utc).date()
 
 
 @pytest.fixture
@@ -27,8 +32,14 @@ def test_flight_segment_normal():
 
 
 def test_flight_segment_past_date():
-    """Test FlightSegment rejects past travel dates."""
-    past = datetime.now() - timedelta(days=1)
+    """Test FlightSegment rejects travel dates that are past everywhere on Earth.
+
+    ``utc_today - 1`` is deliberately still accepted (see
+    ``test_flight_segment_accepts_yesterday_in_utc``), so the still-rejected
+    boundary sits one day further back. This test is what stops the grace
+    period widening beyond the single day that real UTC offsets require.
+    """
+    past = utc_today() - timedelta(days=2)
     with pytest.raises(ValueError, match="Travel date cannot be in the past"):
         FlightSegment(
             departure_airport=[[Airport.PHX, 0]],
@@ -46,6 +57,45 @@ def test_flight_segment_today():
         travel_date=today.strftime("%Y-%m-%d"),
     )
     assert segment.travel_date == today.strftime("%Y-%m-%d")
+
+
+def test_flight_segment_accepts_yesterday_in_utc():
+    """Test FlightSegment accepts the day before the UTC date.
+
+    Travel dates are local to the origin airport, but the validator can only
+    see the server clock. At 17:00 in San Francisco the UTC date has already
+    rolled over, so a same-day evening SFO departure looks like "yesterday" to
+    a UTC container. Rejecting it blinds every westward user to same-day
+    flights for the last hours of their day, so ``utc_today - 1`` must remain
+    searchable.
+    """
+    yesterday_utc = utc_today() - timedelta(days=1)
+    segment = FlightSegment(
+        departure_airport=[[Airport.SFO, 0]],
+        arrival_airport=[[Airport.LAX, 0]],
+        travel_date=yesterday_utc.strftime("%Y-%m-%d"),
+    )
+    assert segment.travel_date == yesterday_utc.strftime("%Y-%m-%d")
+
+
+@pytest.mark.parametrize("zone", ["Etc/GMT-14", "Etc/GMT+12"])
+def test_flight_segment_utc_today_accepted_under_skewed_tz(tz_override, zone):
+    """Test today-in-UTC stays searchable however the server clock is skewed.
+
+    This is the only test that actually reproduces the reported bug: on a host
+    whose local date has already rolled forward (UTC+14), the naive
+    ``datetime.now().date()`` comparison rejects a date that is still today or
+    tomorrow for the traveler. Every other boundary test passes on the unfixed
+    code whenever the developer's box happens to run UTC.
+    """
+    tz_override(zone)
+    today_utc = utc_today()
+    segment = FlightSegment(
+        departure_airport=[[Airport.SFO, 0]],
+        arrival_airport=[[Airport.LAX, 0]],
+        travel_date=today_utc.strftime("%Y-%m-%d"),
+    )
+    assert segment.travel_date == today_utc.strftime("%Y-%m-%d")
 
 
 def test_flight_segment_same_airports():

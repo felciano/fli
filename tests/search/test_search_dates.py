@@ -1,6 +1,6 @@
 """Tests for SearchDates class."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -329,3 +329,37 @@ class TestRoundTripDurationFallback:
         for r in results[:1]:
             assert r.date[0].strftime("%Y-%m-%d") in decoded
             assert r.date[1].strftime("%Y-%m-%d") in decoded
+
+
+def test_price_one_date_does_not_skip_utc_today_under_eastern_tz(
+    search, basic_search_params, tz_override
+):
+    """Test the sweep's past-date guard does not drop today's date on a skewed host.
+
+    ``_price_one_date`` short-circuits dates it considers past. Anchored to the
+    naive server clock, a host running at UTC+14 considers today-in-UTC already
+    gone and silently drops it from a date sweep - the same defect the segment
+    validator has, in the code path added after the search transport was
+    rewritten.
+    """
+    tz_override("Etc/GMT-14")
+
+    calls = []
+
+    class _RecordingClient:
+        def get(self, url, **kwargs):
+            calls.append(url)
+            raise RuntimeError("stop after the guard")
+
+    search.client = _RecordingClient()
+    today_utc = datetime.now(timezone.utc).date()
+
+    search._price_one_date(
+        basic_search_params,
+        datetime(today_utc.year, today_utc.month, today_utc.day),
+        currency=None,
+        language=None,
+        country=None,
+    )
+
+    assert calls, "past-date guard short-circuited a date that is still today in UTC"

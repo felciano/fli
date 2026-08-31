@@ -1,10 +1,12 @@
 import json
 import urllib.parse
+from datetime import datetime, timedelta
 from enum import Enum
 
 from pydantic import (
     BaseModel,
     PositiveInt,
+    model_validator,
 )
 
 from fli.models.airline import Airline
@@ -47,6 +49,49 @@ class FlightSearchFilters(BaseModel):
     emissions: EmissionsFilter = EmissionsFilter.ALL
     bags: BagsFilter | None = None
     show_all_results: bool = True
+
+    @model_validator(mode="after")
+    def validate_segment_date_order(self) -> "FlightSearchFilters":
+        """Validate that each leg departs no earlier than the one before it.
+
+        Nothing else catches a return date that precedes the outbound date: it
+        was rejected only when it happened to land in the past, so a backwards
+        round trip entirely in the future was passed straight to Google.
+
+        Round trips are checked strictly - a return leg can never depart on an
+        earlier calendar date than the outbound. Multi-city legs get a one-day
+        grace: an eastbound date-line crossing can arrive on the *previous*
+        calendar date (HND 00:05 lands at LAX around 18:00 the day before), so
+        an onward leg on that earlier date is a real itinerary.
+
+        Returns:
+            The validated filters.
+
+        Raises:
+            ValueError: If a segment departs before the one preceding it.
+
+        """
+        if self.trip_type not in (TripType.ROUND_TRIP, TripType.MULTI_CITY):
+            return self
+
+        dates = [
+            datetime.strptime(segment.travel_date, "%Y-%m-%d").date()
+            for segment in self.flight_segments
+        ]
+        is_round_trip = self.trip_type == TripType.ROUND_TRIP
+        grace = timedelta(days=0) if is_round_trip else timedelta(days=1)
+
+        for index, (previous, current) in enumerate(zip(dates, dates[1:], strict=False), start=2):
+            if current < previous - grace:
+                if is_round_trip:
+                    raise ValueError(
+                        f"Return date ({current}) cannot be before departure date ({previous})"
+                    )
+                raise ValueError(
+                    f"Segment {index} travel date ({current}) cannot be before "
+                    f"segment {index - 1} travel date ({previous})"
+                )
+        return self
 
     def format(self) -> list:
         """Format filters into Google Flights API structure.
