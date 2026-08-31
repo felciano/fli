@@ -34,8 +34,14 @@ def earliest_searchable_date() -> date:
     Real UTC offsets span UTC-12 to UTC+14, so any traveler's local date is
     within one day of the UTC date. Anchoring to ``utc_today - 1`` therefore
     never rejects a date that is still today-or-future for the actual traveler.
-    The cost is that a genuinely past date may reach Google, which simply
-    returns no flights - a better failure than refusing a valid search.
+    The cost is that a genuinely past date inside that one-day window reaches
+    Google. Google does not answer such a request with an empty result: the
+    search page comes back without its ``ds:1`` payload, which surfaces as
+    ``SearchParseError: Search page carried no ds:1 payload`` — the same
+    message a blocked or reshaped page produces, so it reads as a transport
+    failure rather than a bad date. That is a poor error for one day's worth
+    of inputs, and is the accepted price of never rejecting a date that is
+    still valid for the traveler. See KNOWN_ISSUES.md.
 
     Returns:
         The UTC date minus one day.
