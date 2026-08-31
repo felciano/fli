@@ -82,6 +82,7 @@ Search for flights between two airports on a specific date.
 | `cabin_class` | string | No | ECONOMY | ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST |
 | `max_stops` | string | No | ANY | ANY, NON_STOP, ONE_STOP, or TWO_PLUS_STOPS |
 | `departure_window` | string | No | null | Time window in 'HH-HH' format (e.g., '6-20') |
+| `return_departure_window` | string | No | null | Return-leg time window in 'HH-HH' format; defaults to `departure_window` (requires `return_date`) |
 | `airlines` | list | No | null | Filter by airline codes (e.g., ['BA', 'AA']) |
 | `exclude_airlines` | list | No | null | Airline IATA codes to **exclude** from results |
 | `alliance` | list | No | null | Restrict to ONEWORLD / SKYTEAM / STAR_ALLIANCE |
@@ -225,6 +226,7 @@ find out where (and at what price) a specific flight can be booked.
 | `airlines` | list | No | null | Filter by airline codes (e.g., ['BA', 'AA']) |
 | `exclude_basic_economy` | bool | No | false | Exclude basic economy fares |
 | `departure_window` | string | No | null | Time window in 'HH-HH' format (e.g., '6-20') |
+| `return_departure_window` | string | No | null | Return-leg time window in 'HH-HH' format; defaults to `departure_window` (requires `return_date`) |
 | `sort_by` | string | No | CHEAPEST | Sort order — matters when `flight_numbers` is omitted |
 | `exclude_airlines` | list | No | null | Airline IATA codes to **exclude** |
 | `alliance` / `exclude_alliance` | list | No | null | Restrict / exclude ONEWORLD, SKYTEAM, STAR_ALLIANCE |

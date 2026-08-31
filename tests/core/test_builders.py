@@ -1,7 +1,8 @@
 import pytest
 
 from fli.core.builders import build_date_search_segments, build_flight_segments, normalize_date
-from fli.models import Airport, TripType
+from fli.core.parsers import ParseError
+from fli.models import Airport, TimeRestrictions, TripType
 
 
 class TestNormalizeDate:
@@ -166,3 +167,95 @@ class TestBuildDateSearchSegmentsMultiAirport:
         assert segments[0].arrival_airport == [[Airport.LHR, 0], [Airport.CDG, 0]]
         assert segments[1].departure_airport == [[Airport.LHR, 0], [Airport.CDG, 0]]
         assert segments[1].arrival_airport == [[Airport.JFK, 0], [Airport.LGA, 0]]
+
+
+class TestReturnTimeRestrictions:
+    """Tests for a return leg carrying its own departure-time window.
+
+    The default is load-bearing: with no ``return_time_restrictions`` the
+    return segment must keep inheriting the outbound window. If that ever
+    drifts, every existing round-trip search silently stops filtering its
+    return leg — and because the window is applied client-side, the symptom
+    is *more* results, not an error.
+    """
+
+    OUT = TimeRestrictions(earliest_departure=6, latest_departure=12)
+    RET = TimeRestrictions(earliest_departure=17, latest_departure=23)
+
+    def test_return_inherits_outbound_by_default(self):
+        segments, _ = build_flight_segments(
+            origin=Airport.JFK,
+            destination=Airport.LAX,
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            time_restrictions=self.OUT,
+        )
+        assert segments[0].time_restrictions == self.OUT
+        assert segments[1].time_restrictions == self.OUT
+
+    def test_return_window_overrides_outbound(self):
+        segments, _ = build_flight_segments(
+            origin=Airport.JFK,
+            destination=Airport.LAX,
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            time_restrictions=self.OUT,
+            return_time_restrictions=self.RET,
+        )
+        assert segments[0].time_restrictions.latest_departure == 12
+        assert segments[1].time_restrictions.latest_departure == 23
+        assert segments[0].time_restrictions is not segments[1].time_restrictions
+
+    def test_return_window_without_outbound_window(self):
+        """A return-only window leaves the outbound unrestricted."""
+        segments, _ = build_flight_segments(
+            origin=Airport.JFK,
+            destination=Airport.LAX,
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            return_time_restrictions=self.RET,
+        )
+        assert segments[0].time_restrictions is None
+        assert segments[1].time_restrictions == self.RET
+
+    def test_return_window_without_a_return_date_raises(self):
+        """A one-way search has no return leg to apply the window to.
+
+        Accepting it silently would be the exact failure mode this feature
+        exists to remove: a filter the caller believes is active and that
+        nothing ever reads.
+        """
+        with pytest.raises(ParseError, match="round trip"):
+            build_flight_segments(
+                origin=Airport.JFK,
+                destination=Airport.LAX,
+                departure_date="2027-01-15",
+                time_restrictions=self.OUT,
+                return_time_restrictions=self.RET,
+            )
+
+    def test_one_way_without_a_return_window_is_unaffected(self):
+        segments, trip_type = build_flight_segments(
+            origin=Airport.JFK,
+            destination=Airport.LAX,
+            departure_date="2027-01-15",
+            time_restrictions=self.OUT,
+        )
+        assert trip_type == TripType.ONE_WAY
+        assert len(segments) == 1
+        assert segments[0].time_restrictions == self.OUT
+
+    def test_return_window_survives_multi_airport(self):
+        """Airport mirroring and the per-leg window must not interfere."""
+        segments, _ = build_flight_segments(
+            origin=[Airport.JFK, Airport.LGA],
+            destination=[Airport.LHR, Airport.CDG],
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            time_restrictions=self.OUT,
+            return_time_restrictions=self.RET,
+        )
+        assert segments[1].departure_airport == [[Airport.LHR, 0], [Airport.CDG, 0]]
+        assert segments[1].arrival_airport == [[Airport.JFK, 0], [Airport.LGA, 0]]
+        assert segments[0].time_restrictions == self.OUT
+        assert segments[1].time_restrictions == self.RET

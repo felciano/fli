@@ -117,6 +117,8 @@ Search for flights on a specific date.
 - `cabin_class` - ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
 - `max_stops` - ANY, NON_STOP, ONE_STOP, TWO_PLUS_STOPS
 - `departure_window` - Time range in 'HH-HH' format
+- `return_departure_window` - Time range for the RETURN leg in 'HH-HH' format;
+  defaults to `departure_window`; requires `return_date`
 - `airlines` / `exclude_airlines` - Include / exclude airline IATA codes
 - `alliance` / `exclude_alliance` - Include / exclude ONEWORLD / SKYTEAM / STAR_ALLIANCE
 - `min_layover` / `max_layover` - Layover duration bounds in minutes
@@ -181,7 +183,8 @@ options — each with a clickable `booking_url` and `google_click_url`.
   `['AA100', 'AA200']` round-trip). Accepts bare (`'178'`) or airline-prefixed
   (`'BA178'`) forms. Omit to price the top result.
 - `cabin_class`, `max_stops`, `passengers`, `airlines`, `exclude_basic_economy` - Same as `search_flights`
-- `departure_window`, `sort_by`, `exclude_airlines`, `alliance`, `exclude_alliance`,
+- `departure_window`, `return_departure_window`, `sort_by`, `exclude_airlines`,
+  `alliance`, `exclude_alliance`,
   `min_layover`, `max_layover`, `emissions`, `checked_bags`, `carry_on` - Same as
   `search_flights`. Pass the **same filters used for `search_flights`** so the
   re-run search reproduces the same result set; otherwise (especially when

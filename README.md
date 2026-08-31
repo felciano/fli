@@ -64,6 +64,7 @@ The MCP server provides two main tools:
 | `cabin_class`       | string | ECONOMY, PREMIUM_ECONOMY, BUSINESS, or FIRST                |
 | `max_stops`         | string | ANY, NON_STOP, ONE_STOP, or TWO_PLUS_STOPS                  |
 | `departure_window`  | string | Time window in 'HH-HH' format (e.g., '6-20')                |
+| `return_departure_window` | string | Return-leg time window; defaults to `departure_window` |
 | `airlines`          | list   | Filter by airline codes (e.g., ['BA', 'AA'])                |
 | `exclude_airlines`  | list   | Airline IATA codes to **exclude** (e.g., ['DL', 'B6'])      |
 | `alliance`          | list   | Restrict to alliances: ONEWORLD, SKYTEAM, STAR_ALLIANCE     |
@@ -170,6 +171,12 @@ fli flights JFK LHR 2026-10-25 \
     --stops NON_STOP \        # Non-stop flights only
     --sort DURATION           # Sort by duration
 
+# Round trip with a different window on each leg
+fli flights JFK LHR 2026-10-25 \
+    --return 2026-11-02 \
+    --time 6-12 \             # Leave in the morning
+    --return-time 17-23       # Come back in the evening
+
 # Alliance + exclude + locale (May-2026 filter additions)
 fli flights JFK LHR 2026-10-25 \
     --alliance ONEWORLD \
@@ -259,6 +266,7 @@ fli multi \
 |-------------------------|--------------------------------------------|----------------------------------|
 | `--return, -r`          | Return date                                | `2026-10-30`                     |
 | `--time, -t`            | Departure time window                      | `6-20`                           |
+| `--return-time, -T`     | Return-leg window; needs `--return` (defaults to `--time`) | `17-23`          |
 | `--airlines, -a`        | Airline IATA codes                         | `BA,KL`                          |
 | `--exclude-airlines, -A` | Airline IATA codes to **exclude**         | `DL,B6`                          |
 | `--alliance`            | Restrict to alliance(s)                    | `ONEWORLD`, `SKYTEAM`            |

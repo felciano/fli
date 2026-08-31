@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+from fli.core.builders import build_flight_segments
 from fli.models import (
     Airline,
     Airport,
@@ -27,9 +28,11 @@ from fli.models import (
     FlightSearchFilters,
     FlightSegment,
     PassengerInfo,
+    TimeRestrictions,
     TripType,
 )
 from fli.search.flights import SearchFlights
+from tests.search._pages import as_search_page
 
 
 def _future(days: int) -> str:
@@ -362,3 +365,96 @@ class TestExpandMultiLegPriceless:
         assert len(combos) == 1
         assert len(combos[0]) == 3
         assert all(item.price is None for item in combos[0])
+
+
+class _FakeResponse:
+    """Minimal stand-in for the search page's HTTP response."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.status_code = 200
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _CandidatePage:
+    """Serves the same candidate departure hours for every page fetch.
+
+    Google would apply a time window server-side; this transport can't ask
+    for one, so the page always comes back with the full board and the
+    window is applied to the decoded rows. Handing every fetch the same
+    board is therefore the realistic shape.
+    """
+
+    def __init__(self, hours: list[int]):
+        self.hours = hours
+        self.urls: list[str] = []
+
+    def get(self, url: str, **kwargs):
+        self.urls.append(url)
+        rows = [[hour] for hour in self.hours]
+        return _FakeResponse(as_search_page([["", "", "", "", "sess"], None, [rows], None]))
+
+
+def _row_to_result(row: list[int]) -> FlightResult:
+    """Decode a synthetic row (``[hour]``) into a FlightResult."""
+    hour = row[0]
+    return FlightResult(
+        legs=[
+            FlightLeg(
+                airline=Airline.AA,
+                flight_number="100",
+                departure_airport=Airport.JFK,
+                arrival_airport=Airport.LAX,
+                departure_datetime=datetime(2027, 3, 15, hour, 0),
+                arrival_datetime=datetime(2027, 3, 15, hour, 30),
+                duration=30,
+            )
+        ],
+        price=300,
+        currency="USD",
+        duration=30,
+        stops=0,
+    )
+
+
+class TestPerLegDepartureWindows:
+    """End-to-end: each leg of a round trip honours its own window.
+
+    This is the only test that exercises the CLI-visible promise all the way
+    through — builder to segments, segments to
+    ``apply_client_side_filters``, and the return leg picked up only after
+    ``_expand_multi_leg`` has pinned the outbound.
+    """
+
+    def test_outbound_and_return_windows_are_applied_independently(self):
+        segments, trip_type = build_flight_segments(
+            origin=Airport.JFK,
+            destination=Airport.LAX,
+            departure_date=_future(30),
+            return_date=_future(37),
+            time_restrictions=TimeRestrictions(earliest_departure=6, latest_departure=12),
+            return_time_restrictions=TimeRestrictions(earliest_departure=17, latest_departure=23),
+        )
+        filters = FlightSearchFilters(
+            trip_type=trip_type,
+            passenger_info=PassengerInfo(adults=1),
+            flight_segments=segments,
+        )
+
+        client = SearchFlights()
+        client.client = _CandidatePage([7, 19])
+        with patch("fli.search.flights.parse_flight_row", side_effect=_row_to_result):
+            combos = client.search(filters)
+
+        assert combos, "expected one outbound/return pair to survive both windows"
+        hours = [
+            (outbound.legs[0].departure_datetime.hour, ret.legs[0].departure_datetime.hour)
+            for outbound, ret in combos
+        ]
+        assert hours == [(7, 19)], (
+            "outbound must fall in 6-12 and the return in 17-23; "
+            f"got {hours}. A return leg filtered against the outbound window "
+            "drops the 19:00 return and keeps nothing."
+        )

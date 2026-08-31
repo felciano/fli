@@ -162,6 +162,7 @@ def build_flight_segments(
     departure_date: str,
     return_date: str | None = None,
     time_restrictions: TimeRestrictions | None = None,
+    return_time_restrictions: TimeRestrictions | None = None,
 ) -> tuple[list[FlightSegment], TripType]:
     """Build flight segments for a search request.
 
@@ -171,11 +172,27 @@ def build_flight_segments(
         departure_date: Outbound travel date in YYYY-MM-DD format
         return_date: Return travel date in YYYY-MM-DD format (optional)
         time_restrictions: Time restrictions to apply to segments
+        return_time_restrictions: Time restrictions for the return leg only.
+            ``None`` (the default) means the return leg inherits
+            ``time_restrictions``, which is what every caller relied on before
+            per-leg windows existed. Requires ``return_date``.
 
     Returns:
         Tuple of (list of FlightSegment objects, TripType)
 
+    Raises:
+        ParseError: If a return window is given without a return date.
+
     """
+    from fli.core.parsers import ParseError
+
+    if return_time_restrictions is not None and not return_date:
+        raise ParseError(
+            "A return-leg departure window (--return-time / return_departure_window) "
+            "only applies to a round trip. Add a return date (--return / return_date), "
+            "or drop the return window."
+        )
+
     departure_date = normalize_date(departure_date)
 
     # Normalize to lists for uniform handling
@@ -201,7 +218,14 @@ def build_flight_segments(
                 departure_airport=[[apt, 0] for apt in destinations],
                 arrival_airport=[[apt, 0] for apt in origins],
                 travel_date=return_date,
-                time_restrictions=time_restrictions,
+                # Inheriting the outbound window is the historical contract:
+                # anything else would silently stop filtering the return leg
+                # of every existing round-trip search.
+                time_restrictions=(
+                    return_time_restrictions
+                    if return_time_restrictions is not None
+                    else time_restrictions
+                ),
             )
         )
 

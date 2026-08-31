@@ -744,3 +744,120 @@ class TestDateSearchDurationSweep:
         assert captured["p"].min_duration == 4
         assert captured["p"].max_duration == 6
         assert captured["p"].trip_duration is None
+
+
+class TestReturnDepartureWindow:
+    """The return leg of a round trip may carry its own departure window."""
+
+    def test_build_flight_filters_gives_return_its_own_window(self):
+        from fli.mcp.server import _build_flight_filters
+
+        params = FlightSearchParams(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            departure_window="6-14",
+            return_departure_window="10-22",
+        )
+        filters, _, _, _ = _build_flight_filters(params)
+        segments = filters.flight_segments
+        assert segments[0].time_restrictions.latest_departure == 14
+        assert segments[1].time_restrictions.latest_departure == 22
+
+    def test_return_inherits_outbound_when_unset(self):
+        from fli.mcp.server import _build_flight_filters
+
+        params = FlightSearchParams(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            departure_window="6-14",
+        )
+        filters, _, _, _ = _build_flight_filters(params)
+        assert filters.flight_segments[1].time_restrictions.latest_departure == 14
+
+    def test_config_default_window_does_not_leak_past_the_return(self, monkeypatch):
+        """The config default must reach BOTH legs, not just the outbound.
+
+        ``CONFIG.default_departure_window`` stands in for an explicit
+        ``departure_window``; if the return stopped inheriting the resolved
+        window, a configured default would silently widen every return leg.
+        """
+        from fli.mcp.server import CONFIG, _build_flight_filters
+
+        monkeypatch.setattr(CONFIG, "default_departure_window", "6-14")
+        params = FlightSearchParams(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+        )
+        filters, _, _, _ = _build_flight_filters(params)
+        assert filters.flight_segments[0].time_restrictions.latest_departure == 14
+        assert filters.flight_segments[1].time_restrictions.latest_departure == 14
+
+    def test_config_default_does_not_override_an_explicit_return_window(self, monkeypatch):
+        from fli.mcp.server import CONFIG, _build_flight_filters
+
+        monkeypatch.setattr(CONFIG, "default_departure_window", "6-14")
+        params = FlightSearchParams(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            return_departure_window="10-22",
+        )
+        filters, _, _, _ = _build_flight_filters(params)
+        assert filters.flight_segments[0].time_restrictions.latest_departure == 14
+        assert filters.flight_segments[1].time_restrictions.latest_departure == 22
+
+    def test_return_window_without_return_date_is_reported(self):
+        """One-way + return window is a caller mistake, surfaced not ignored."""
+        params = FlightSearchParams(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_departure_window="10-22",
+        )
+        result = _execute_flight_search(params)
+        assert result["success"] is False
+        assert "return_date" in result["error"]
+
+    def test_search_flights_tool_forwards_the_return_window(self, monkeypatch):
+        import fli.mcp.server as server
+
+        captured = {}
+        monkeypatch.setattr(
+            server, "_execute_flight_search", lambda params: captured.setdefault("p", params) or {}
+        )
+        server.search_flights(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            departure_window="6-14",
+            return_departure_window="10-22",
+        )
+        assert captured["p"].return_departure_window == "10-22"
+
+    def test_get_booking_options_tool_forwards_the_return_window(self, monkeypatch):
+        """Filter parity: booking options re-run the same search."""
+        import fli.mcp.server as server
+
+        captured = {}
+        monkeypatch.setattr(
+            server,
+            "_execute_booking_options",
+            lambda params, numbers: captured.setdefault("p", params) or {},
+        )
+        server.get_booking_options(
+            origin="JFK",
+            destination="LAX",
+            departure_date="2027-01-15",
+            return_date="2027-01-22",
+            departure_window="6-14",
+            return_departure_window="10-22",
+        )
+        assert captured["p"].return_departure_window == "10-22"

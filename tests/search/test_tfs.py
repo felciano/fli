@@ -126,6 +126,33 @@ class TestBuildTfs:
         )
         assert built == TFS_ROUND_TRIP
 
+    def test_time_restrictions_never_reach_the_tfs_token(self):
+        """Departure windows are deliberately client-side, not encoded.
+
+        ``tfs`` has no known field for a per-segment time window, so the
+        transport applies windows to the decoded rows instead (see
+        ``apply_client_side_filters``). This pins that contract: if someone
+        later teaches the encoder a time field, this test fails loudly rather
+        than the change quietly altering the bytes of every live query.
+        """
+        plain = build_tfs(
+            _filters(
+                [("JFK", "LAX", OUTBOUND_DATE), ("LAX", "JFK", RETURN_DATE)],
+                trip_type=TripType.ROUND_TRIP,
+            )
+        )
+        windowed = _filters(
+            [("JFK", "LAX", OUTBOUND_DATE), ("LAX", "JFK", RETURN_DATE)],
+            trip_type=TripType.ROUND_TRIP,
+        )
+        windowed.flight_segments[0].time_restrictions = TimeRestrictions(
+            earliest_departure=6, latest_departure=12
+        )
+        windowed.flight_segments[1].time_restrictions = TimeRestrictions(
+            earliest_departure=17, latest_departure=23
+        )
+        assert build_tfs(windowed) == plain
+
     def test_any_stops_omits_the_ceiling(self):
         """MaxStops.ANY must leave field 5 out — writing 0 means non-stop."""
         assert build_tfs(_filters([("JFK", "LAX", OUTBOUND_DATE)])) != TFS_NON_STOP

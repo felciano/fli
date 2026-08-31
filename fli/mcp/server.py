@@ -116,6 +116,13 @@ class FlightSearchParams(BaseModel):
     departure_window: str | None = Field(
         None, description="Preferred departure time window in 'HH-HH' 24h format (e.g., '6-20')"
     )
+    return_departure_window: str | None = Field(
+        None,
+        description=(
+            "Departure time window for the RETURN leg in 'HH-HH' 24h format "
+            "(e.g., '17-23'). Defaults to departure_window. Requires return_date."
+        ),
+    )
     airlines: list[str] | None = Field(
         None, description="Filter by airline IATA codes (e.g., ['BA', 'AA'])"
     )
@@ -611,9 +618,17 @@ def _build_flight_filters(
     alliances = parse_alliances(params.alliance)
     alliances_exclude = parse_alliances(params.exclude_alliance)
 
-    # Build time restrictions
+    # Build time restrictions. The configured default stands in for an
+    # explicit departure_window, so the return leg inherits whatever the
+    # outbound resolved to — the default included — unless the caller named
+    # a return window of its own.
     departure_window = params.departure_window or CONFIG.default_departure_window
     time_restrictions = build_time_restrictions(departure_window) if departure_window else None
+    return_time_restrictions = (
+        build_time_restrictions(params.return_departure_window)
+        if params.return_departure_window
+        else None
+    )
 
     # Build flight segments (pass full lists for multi-airport support)
     segments, trip_type = build_flight_segments(
@@ -622,6 +637,7 @@ def _build_flight_filters(
         departure_date=params.departure_date,
         return_date=params.return_date,
         time_restrictions=time_restrictions,
+        return_time_restrictions=return_time_restrictions,
     )
 
     # Parse new filters
@@ -1003,6 +1019,15 @@ def search_flights(
         str | None,
         Field(description="Departure time window in 'HH-HH' 24h format (e.g., '6-20')"),
     ] = None,
+    return_departure_window: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Departure time window for the RETURN leg in 'HH-HH' 24h format "
+                "(e.g., '17-23'). Defaults to departure_window. Requires return_date."
+            )
+        ),
+    ] = None,
     airlines: Annotated[
         list[str] | None,
         Field(description="Filter by airline IATA codes (e.g., ['BA', 'AA'])"),
@@ -1108,6 +1133,7 @@ def search_flights(
         departure_date=departure_date,
         return_date=return_date,
         departure_window=effective_departure_window,
+        return_departure_window=return_departure_window,
         airlines=airlines,
         cabin_class=cabin_class,
         max_stops=max_stops,
@@ -1393,6 +1419,15 @@ def get_booking_options(
         str | None,
         Field(description="Departure time window in 'HH-HH' 24h format (e.g., '6-20')"),
     ] = None,
+    return_departure_window: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Departure time window for the RETURN leg in 'HH-HH' 24h format "
+                "(e.g., '17-23'). Defaults to departure_window. Requires return_date."
+            )
+        ),
+    ] = None,
     sort_by: Annotated[
         str,
         Field(
@@ -1455,6 +1490,7 @@ def get_booking_options(
         departure_date=departure_date,
         return_date=return_date,
         departure_window=effective_departure_window,
+        return_departure_window=return_departure_window,
         cabin_class=cabin_class,
         max_stops=max_stops,
         sort_by=sort_by,

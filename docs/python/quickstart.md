@@ -32,6 +32,13 @@ fli flights JFK LHR 2026-06-01
 fli flights JFK LHR 2026-06-01 --return 2026-06-15
 ```
 
+Give each leg its own departure window with `--return-time` (it defaults to
+`--time`, so leaving it out keeps both legs on the same window):
+
+```bash
+fli flights JFK LHR 2026-06-01 --return 2026-06-15 --time 6-12 --return-time 17-23
+```
+
 3. Search with filters:
 
 ```bash

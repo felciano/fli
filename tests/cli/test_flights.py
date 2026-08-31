@@ -581,3 +581,109 @@ def test_flights_rejects_unknown_icao_with_a_labelled_error(
     # CLI already string-match on, while explaining the four-letter dispatch.
     assert "Invalid origin airport code: 'ZZZZ'" in message
     assert "ICAO" in message
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _next_week() -> str:
+    return (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+
+def test_return_time_separate_from_outbound(runner, mock_search_flights, mock_console):
+    """--return-time gives the return leg its own departure window."""
+    result = runner.invoke(
+        app,
+        [
+            "flights",
+            "JFK",
+            "LAX",
+            _today(),
+            "--return",
+            _next_week(),
+            "--time",
+            "6-14",
+            "--return-time",
+            "10-22",
+        ],
+    )
+    assert result.exit_code == 0
+    segments = mock_search_flights.search.call_args[0][0].flight_segments
+    assert segments[0].time_restrictions.earliest_departure == 6
+    assert segments[0].time_restrictions.latest_departure == 14
+    assert segments[1].time_restrictions.earliest_departure == 10
+    assert segments[1].time_restrictions.latest_departure == 22
+
+
+def test_return_time_defaults_to_outbound(runner, mock_search_flights, mock_console):
+    """Without --return-time, the return leg keeps inheriting --time.
+
+    Regression guard: if this ever stops holding, round-trip searches quietly
+    stop filtering their return leg and simply return more results.
+    """
+    result = runner.invoke(
+        app,
+        ["flights", "JFK", "LAX", _today(), "--return", _next_week(), "--time", "6-14"],
+    )
+    assert result.exit_code == 0
+    segments = mock_search_flights.search.call_args[0][0].flight_segments
+    assert segments[1].time_restrictions.earliest_departure == 6
+    assert segments[1].time_restrictions.latest_departure == 14
+
+
+def test_return_time_without_return_date_errors(runner, mock_search_flights, mock_console):
+    """--return-time needs a --return date; it must not be silently inert."""
+    result = runner.invoke(
+        app,
+        ["flights", "JFK", "LAX", _today(), "--return-time", "10-22"],
+    )
+    assert result.exit_code == 1
+    assert "return date" in result.stdout
+    mock_search_flights.search.assert_not_called()
+
+
+def test_return_time_short_flag(runner, mock_search_flights, mock_console):
+    """-T is the short form, mirroring -t for the outbound window."""
+    result = runner.invoke(
+        app,
+        ["flights", "JFK", "LAX", _today(), "--return", _next_week(), "-t", "6-14", "-T", "10-22"],
+    )
+    assert result.exit_code == 0
+    segments = mock_search_flights.search.call_args[0][0].flight_segments
+    assert segments[1].time_restrictions.latest_departure == 22
+
+
+def test_return_time_in_json_output(runner, mock_search_flights, mock_console):
+    """The echoed query reports the return window alongside the outbound one."""
+    result = runner.invoke(
+        app,
+        [
+            "flights",
+            "JFK",
+            "LAX",
+            _today(),
+            "--return",
+            _next_week(),
+            "--time",
+            "6-14",
+            "--return-time",
+            "10-22",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["query"]["departure_window"] == "6-14"
+    assert payload["query"]["return_departure_window"] == "10-22"
+
+
+def test_return_time_bad_format_errors(runner, mock_search_flights, mock_console):
+    """A malformed return window goes through the shared time-range parser."""
+    result = runner.invoke(
+        app,
+        ["flights", "JFK", "LAX", _today(), "--return", _next_week(), "--return-time", "6:22"],
+    )
+    assert result.exit_code == 1
+    assert "start-end" in result.stdout
