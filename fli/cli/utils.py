@@ -180,13 +180,23 @@ def format_duration(minutes: int) -> str:
 
 
 def serialize_airport(airport: Airport) -> dict[str, str]:
-    """Serialize an airport for machine-readable output."""
-    return {"code": airport.name, "name": airport.value}
+    """Serialize an airport for machine-readable output.
+
+    The disambiguating ``" (CODE)"`` suffix carried by shared names is
+    stripped: ``code`` already reports it, so leaving it in ``name`` would
+    repeat it in every JSON payload.
+    """
+    return {"code": airport.name, "name": airport.value.removesuffix(f" ({airport.name})")}
 
 
 def serialize_airline(airline: Airline) -> dict[str, str]:
-    """Serialize an airline for machine-readable output."""
-    return {"code": airline.name.removeprefix("_"), "name": airline.value}
+    """Serialize an airline for machine-readable output.
+
+    Strips the disambiguating ``" (CODE)"`` suffix for the same reason as
+    :func:`serialize_airport`.
+    """
+    code = airline.name.removeprefix("_")
+    return {"code": code, "name": airline.value.removesuffix(f" ({code})")}
 
 
 def serialize_flight_leg(leg: Any) -> dict[str, Any]:

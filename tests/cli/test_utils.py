@@ -16,6 +16,8 @@ from fli.cli.utils import (
     filter_flights_by_time,
     parse_airlines,
     parse_stops,
+    serialize_airline,
+    serialize_airport,
     serialize_date_result,
     serialize_flight_result,
     validate_date,
@@ -594,3 +596,24 @@ def test_format_airport_unaffected_for_unique_names():
     from fli.models import Airport
 
     assert format_airport(Airport.JFK) == "JFK (John F Kennedy)"
+
+
+def test_serialize_airport_strips_the_disambiguating_suffix():
+    """JSON output carries the code separately, so the name must not repeat it."""
+    assert serialize_airport(Airport.TRI) == {
+        "code": "TRI",
+        "name": "Tri-Cities Airport",
+    }
+
+
+def test_serialize_airport_leaves_unsuffixed_names_alone():
+    """Airports with a unique name are unaffected."""
+    assert serialize_airport(Airport.LHR) == {
+        "code": "LHR",
+        "name": "London Heathrow Airport",
+    }
+
+
+def test_serialize_airline_strips_the_disambiguating_suffix():
+    """Airlines share the same suffixing scheme as airports."""
+    assert serialize_airline(Airline.W6) == {"code": "W6", "name": "Wizz Air"}
