@@ -3,11 +3,16 @@
 The ``tfs`` fixtures below were issued by Google itself for the same queries,
 so a byte mismatch means the encoder has drifted from what Google accepts.
 Everything here is offline — no live API calls.
+
+Because those fixtures are real captures, the travel dates they encode are
+fixed forever — they cannot be moved forward without invalidating the
+comparison. The module therefore runs with the validation clock pinned to
+the capture date; see :func:`_pin_clock_to_capture_date`.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -27,6 +32,7 @@ from fli.models import (
     TimeRestrictions,
     TripType,
 )
+from fli.models.google_flights import base as _base
 from fli.search._tfs import (
     apply_client_side_filters,
     build_tfs,
@@ -35,6 +41,31 @@ from fli.search._tfs import (
     unsupported_filters,
 )
 from fli.search.exceptions import SearchUnsupportedError
+
+# The day the ``tfs`` fixtures below were captured from Google's own URLs.
+# Every travel date in this module is on or after it.
+CAPTURE_DATE = date(2026, 8, 26)
+
+
+@pytest.fixture(autouse=True)
+def _pin_clock_to_capture_date(monkeypatch):
+    """Run every test in this module as if it were the fixture capture date.
+
+    ``FlightSegment`` rejects a travel date in the past, and the captured
+    ``tfs`` tokens encode 2026-09-15 / 2026-09-19 / 2026-10-15 — the dates
+    Google was asked about. Those dates are part of the expected output, so
+    they cannot be rolled forward to keep them in the future; regenerating
+    them from a relative date would only compare the encoder against itself.
+
+    Pinning the clock keeps the captures byte-exact and stops the module
+    from expiring: without this, every test here started failing on
+    2026-09-16 with "Travel date cannot be in the past", which reads as an
+    encoder fault rather than a stale test.
+
+    Validation itself stays live — a genuinely malformed date still fails.
+    """
+    monkeypatch.setattr(_base, "earliest_searchable_date", lambda: CAPTURE_DATE)
+
 
 # Captured from Google's own search-page URLs (2026-08-26) for
 # JFK -> LAX on 2026-09-15, returning 2026-09-19.
