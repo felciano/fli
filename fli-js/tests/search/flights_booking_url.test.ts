@@ -214,3 +214,30 @@ describe("buildFlightBookingUrl", () => {
     expect(Buffer.from(raw).includes(Buffer.from([0x48, 0x03]))).toBe(true);
   });
 });
+
+describe("buildFlightBookingUrl passengers", () => {
+  const search = new SearchFlights();
+
+  test("defaults to one adult", () => {
+    const raw = Buffer.from(tfsBytes(search.buildFlightBookingUrl(oneWay())));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x48, 0x01]))).toBe(true);
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40]))).toBe(false);
+  });
+
+  test("a family reaches the token as 1,1,2,4", () => {
+    const url = search.buildFlightBookingUrl(oneWay(), {
+      passengerInfo: { adults: 2, children: 1, infants_in_seat: 0, infants_on_lap: 1 },
+    });
+    expect(url).not.toBe(search.buildFlightBookingUrl(oneWay()));
+    const raw = Buffer.from(tfsBytes(url));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40, 0x01, 0x40, 0x02, 0x40, 0x04]))).toBe(true);
+  });
+
+  test("an all-zero PassengerInfo falls back to one adult", () => {
+    const url = search.buildFlightBookingUrl(oneWay(), {
+      passengerInfo: { adults: 0, children: 0, infants_in_seat: 0, infants_on_lap: 0 },
+    });
+    const raw = Buffer.from(tfsBytes(url));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x48, 0x01]))).toBe(true);
+  });
+});

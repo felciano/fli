@@ -310,6 +310,28 @@ class TestBuildTfsToken:
         # f8=1 (0x40 0x01), f9=1 (0x48 0x01), f14=1 (0x70 0x01)
         assert b"\x40\x01\x48\x01\x70\x01" in raw
 
+    def test_passengers_default_to_one_adult(self):
+        """Field 8 carries a single adult (1) when passengers is omitted."""
+        built = build_tfs_token([[LegSpec("SFO", "2026-09-01", "PHX", "AA", "100")]])
+        raw = _b64url_to_bytes(built)
+        # f8=1 once (0x40 0x01), immediately followed by f9 — no second f8.
+        assert b"\x40\x01\x48\x01" in raw
+        assert b"\x40\x01\x40" not in raw
+
+    def test_passengers_encode_one_repeated_field_8_per_traveller(self):
+        """Two adults + one child emit field 8 three times, in kind order."""
+        segs = [[LegSpec("SFO", "2026-09-01", "PHX", "AA", "100")]]
+        raw = _b64url_to_bytes(build_tfs_token(segs, passengers=[1, 1, 2]))
+        # 0x40 0x01, 0x40 0x01, 0x40 0x02 then field 9.
+        assert b"\x40\x01\x40\x01\x40\x02\x48\x01" in raw
+        assert raw != _b64url_to_bytes(build_tfs_token(segs))
+
+    def test_passengers_and_seat_are_independent(self):
+        """Cabin and party size both reach the token without clobbering each other."""
+        segs = [[LegSpec("SFO", "2026-09-01", "PHX", "AA", "100")]]
+        raw = _b64url_to_bytes(build_tfs_token(segs, passengers=[1, 2], seat=3))
+        assert b"\x40\x01\x40\x02\x48\x03" in raw
+
     def test_seat_business_encodes_field_9(self):
         """Field 9 is business (3) when seat=3; golden tokens stay economy-only."""
         segs = [[LegSpec("SFO", "2026-09-01", "PHX", "AA", "100")]]

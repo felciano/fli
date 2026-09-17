@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from fli.models import Airline, Airport, FlightLeg, FlightResult, SeatType
+from fli.models.google_flights.base import PassengerInfo
 from fli.search.flights import SearchFlights
 
 # ---------------------------------------------------------------------------
@@ -279,3 +280,42 @@ class TestBuildFlightBookingUrl:
         business = _raw(business_url)
         assert b"\x40\x01\x48\x03\x70\x01" in business
         assert b"\x40\x01\x48\x01\x70\x01" not in business
+
+    def test_passenger_info_defaults_to_one_adult(self):
+        """Omitted passenger_info keeps the historical single-adult token."""
+        import base64
+
+        client = _make_client()
+        url = client.build_flight_booking_url(_one_way())
+        tfs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["tfs"][0]
+        pad = "=" * ((4 - len(tfs) % 4) % 4)
+        raw = base64.urlsafe_b64decode(tfs + pad)
+        assert b"\x40\x01\x48\x01" in raw
+        assert b"\x40\x01\x40" not in raw
+
+    def test_passenger_info_family_reaches_the_token(self):
+        """2 adults + 1 child + 1 lap infant encode as field 8 = 1,1,2,4."""
+        import base64
+
+        client = _make_client()
+        family = PassengerInfo(adults=2, children=1, infants_on_lap=1)
+        solo_url = client.build_flight_booking_url(_one_way())
+        family_url = client.build_flight_booking_url(_one_way(), passenger_info=family)
+        assert solo_url != family_url
+
+        tfs = urllib.parse.parse_qs(urllib.parse.urlparse(family_url).query)["tfs"][0]
+        pad = "=" * ((4 - len(tfs) % 4) % 4)
+        raw = base64.urlsafe_b64decode(tfs + pad)
+        assert b"\x40\x01\x40\x01\x40\x02\x40\x04" in raw
+
+    def test_passenger_info_all_zero_falls_back_to_one_adult(self):
+        """A degenerate PassengerInfo must not emit an empty party."""
+        import base64
+
+        client = _make_client()
+        empty = PassengerInfo(adults=0)
+        url = client.build_flight_booking_url(_one_way(), passenger_info=empty)
+        tfs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["tfs"][0]
+        pad = "=" * ((4 - len(tfs) % 4) % 4)
+        raw = base64.urlsafe_b64decode(tfs + pad)
+        assert b"\x40\x01\x48\x01" in raw

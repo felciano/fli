@@ -21,7 +21,7 @@ from fli.models import (
     FlightSearchFilters,
     SeatType,
 )
-from fli.models.google_flights.base import SortBy, TripType
+from fli.models.google_flights.base import PassengerInfo, SortBy, TripType
 from fli.search._concurrency import parallel_map
 from fli.search._decoders import (
     _try_parse_booking_row,  # noqa: F401 — back-compat re-export for tests
@@ -33,6 +33,7 @@ from fli.search._tfs import (
     build_tfs,
     extract_payload,
     page_url,
+    passenger_codes,
     unsupported_filters,
 )
 from fli.search._urls import with_locale_params
@@ -391,6 +392,7 @@ class SearchFlights:
         language: str | None = None,
         country: str | None = None,
         seat_type: SeatType = SeatType.ECONOMY,
+        passenger_info: PassengerInfo | None = None,
     ) -> str:
         """Build a Google Flights deep-link URL for a specific itinerary.
 
@@ -413,6 +415,10 @@ class SearchFlights:
             country: ISO 3166-1 alpha-2 country code appended as ``gl=``.
             seat_type: Cabin class encoded into the ``tfs`` token (field 9).
                 Defaults to economy for backward compatibility.
+            passenger_info: Party composition encoded into the ``tfs`` token
+                (repeated field 8).  Defaults to a single adult for backward
+                compatibility; pass the search's own ``passenger_info`` so
+                the link prices the party that was actually searched.
 
         Returns:
             A ``https://www.google.com/travel/flights/booking?tfs=…`` URL.
@@ -441,7 +447,15 @@ class SearchFlights:
                     for leg in result.legs
                 ]
                 segments.append(seg_legs)
-            tfs = build_tfs_token(segments, is_one_way=is_one_way, seat=seat_type.value)
+            tfs = build_tfs_token(
+                segments,
+                is_one_way=is_one_way,
+                seat=seat_type.value,
+                # An all-zero PassengerInfo would otherwise emit an empty
+                # party, which Google rejects; one adult matches the
+                # historical token.
+                passengers=passenger_codes(passenger_info) or [1],
+            )
             url = f"https://www.google.com/travel/flights/booking?tfs={tfs}"
         except Exception:
             logger.debug("build_flight_booking_url: tfs construction failed", exc_info=True)

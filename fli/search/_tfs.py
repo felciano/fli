@@ -54,6 +54,33 @@ _DS_DATA = re.compile(r"data:(.*?), sideChannel", re.S)
 # Passenger kinds, in the order Google's repeated field 8 expects them.
 _PASSENGER_FIELDS = ("adults", "children", "infants_in_seat", "infants_on_lap")
 
+
+def passenger_codes(passenger_info: Any) -> list[int]:
+    """Expand a :class:`PassengerInfo` into Google's repeated field 8 codes.
+
+    Google encodes party composition as one field 8 entry per traveller,
+    carrying that traveller's kind (1 = adult, 2 = child, 3 = infant in
+    seat, 4 = infant on lap) rather than a count per kind. Two adults and a
+    child are therefore ``[1, 1, 2]``.
+
+    Shared by the search transport (:func:`build_tfs`) and the booking
+    deep-link builder so a link always describes the party that was priced.
+
+    Args:
+        passenger_info: A :class:`PassengerInfo`, or None.
+
+    Returns:
+        Kind codes in field order. Empty when *passenger_info* is None or
+        every count is zero — callers substitute a single adult.
+
+    """
+    return [
+        code
+        for kind, code in zip(_PASSENGER_FIELDS, (1, 2, 3, 4), strict=False)
+        for _ in range(getattr(passenger_info, kind, 0) or 0)
+    ]
+
+
 # Filters with no ``tfs`` encoding and no reliable post-hoc equivalent —
 # the decoded rows don't carry the data needed to apply them locally.
 _UNSUPPORTED = (
@@ -116,11 +143,7 @@ def build_tfs(filters: Any, *, travel_dates: list[str] | None = None) -> str:
         )
 
     stops = filters.stops.value
-    passengers = [
-        code
-        for kind, code in zip(_PASSENGER_FIELDS, (1, 2, 3, 4), strict=False)
-        for _ in range(getattr(filters.passenger_info, kind, 0))
-    ]
+    passengers = passenger_codes(filters.passenger_info)
 
     # Google reads alliances out of the same carrier lists as airline codes.
     carriers = [a.value for a in (getattr(filters, "alliances", None) or [])]

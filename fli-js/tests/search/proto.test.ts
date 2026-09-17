@@ -375,3 +375,30 @@ describe("buildTfsToken", () => {
     expect(Buffer.from(economy).equals(Buffer.from(business))).toBe(false);
   });
 });
+
+describe("buildTfsToken passengers", () => {
+  const segs: LegSpec[][] = [
+    [{ origin: "SFO", depDate: "2026-09-01", dest: "PHX", airline: "AA", flightNumber: "100" }],
+  ];
+
+  test("defaults to one adult (single field 8)", () => {
+    const raw = Buffer.from(tfsBytes(buildTfsToken(segs)));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x48, 0x01]))).toBe(true);
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40]))).toBe(false);
+  });
+
+  test("emits one repeated field 8 per traveller, in kind order", () => {
+    const raw = Buffer.from(tfsBytes(buildTfsToken(segs, { passengers: [1, 1, 2] })));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40, 0x01, 0x40, 0x02, 0x48, 0x01]))).toBe(true);
+  });
+
+  test("an empty passenger list falls back to one adult", () => {
+    const raw = Buffer.from(tfsBytes(buildTfsToken(segs, { passengers: [] })));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x48, 0x01]))).toBe(true);
+  });
+
+  test("passengers and seat are independent", () => {
+    const raw = Buffer.from(tfsBytes(buildTfsToken(segs, { passengers: [1, 2], seat: 3 })));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40, 0x02, 0x48, 0x03]))).toBe(true);
+  });
+});
