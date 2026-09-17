@@ -25,6 +25,21 @@ function asFetch(fn: (input: unknown, init?: RequestInit) => Promise<Response>):
   return fn as unknown as typeof fetch;
 }
 
+/**
+ * Restore an env var to a previously captured value.
+ *
+ * Assigning `undefined` to a `process.env` property does not unset it — the
+ * value is coerced to the *string* `"undefined"`. Doing that to FLI_TIMEOUT
+ * left every later `new Client()` throwing
+ * `FLI_TIMEOUT must be a number of seconds, got: "undefined"`, and doing it
+ * to HTTPS_PROXY handed the client a bogus proxy. A var that was unset must
+ * be deleted, not assigned.
+ */
+function restoreEnv(key: string, previous: string | undefined): void {
+  if (previous === undefined) delete process.env[key];
+  else process.env[key] = previous;
+}
+
 describe("Client", () => {
   let originalEnv: typeof process.env.FLI_TIMEOUT;
 
@@ -32,7 +47,7 @@ describe("Client", () => {
     originalEnv = process.env.FLI_TIMEOUT;
   });
   afterEach(() => {
-    process.env.FLI_TIMEOUT = originalEnv;
+    restoreEnv("FLI_TIMEOUT", originalEnv);
   });
 
   test("POST with body sends the expected request", async () => {
@@ -227,12 +242,12 @@ describe("Client", () => {
       await c.post("https://example.com", { body: "" });
       expect(captured.init?.proxy).toBe("http://proxy.example.com:8080");
     } finally {
-      if (previous == null) process.env.HTTPS_PROXY = undefined;
-      else process.env.HTTPS_PROXY = previous;
+      restoreEnv("HTTPS_PROXY", previous);
     }
   });
 
   test("explicit proxy option overrides env", async () => {
+    const previous = process.env.HTTPS_PROXY;
     process.env.HTTPS_PROXY = "http://wrong.example.com";
     try {
       const captured: { init?: RequestInit & { proxy?: string } } = {};
@@ -247,7 +262,7 @@ describe("Client", () => {
       await c.post("https://example.com", { body: "" });
       expect(captured.init?.proxy).toBe("http://right.example.com");
     } finally {
-      process.env.HTTPS_PROXY = undefined;
+      restoreEnv("HTTPS_PROXY", previous);
     }
   });
 
