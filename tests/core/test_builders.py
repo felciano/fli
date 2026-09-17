@@ -1,8 +1,52 @@
+from datetime import date, datetime, timedelta, timezone
+
 import pytest
 
 from fli.core.builders import build_date_search_segments, build_flight_segments, normalize_date
 from fli.core.parsers import ParseError
 from fli.models import Airport, TimeRestrictions, TripType
+
+
+def _future_date(days_ahead: int) -> str:
+    """Return a date this many days from now, in YYYY-MM-DD format.
+
+    Travel dates here are arbitrary — the tests care about how the builders
+    shape segments, not about which day is requested — but they still pass
+    through ``FlightSegment``, which rejects a date in the past. Hardcoded
+    literals therefore turn into failures on a date chosen by whoever wrote
+    them; deriving from today means they cannot.
+    """
+    today_utc = datetime.now(timezone.utc).date()
+    return (today_utc + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+
+def _fifth_of_a_future_month(months_ahead: int = 4) -> date:
+    """Return the 5th of a month a few months from now.
+
+    Pinning the day to a single digit guarantees the unpadded rendering
+    below really differs from the ISO one, so the normalization tests stay
+    meaningful whatever today happens to be — a computed date that landed
+    on the 15th would compare "2027-1-15" against "2027-01-15" on the month
+    alone, and one in October would not exercise padding at all.
+    """
+    today_utc = datetime.now(timezone.utc).date()
+    month = today_utc.month + months_ahead
+    return date(today_utc.year + (month - 1) // 12, (month - 1) % 12 + 1, 5)
+
+
+_DEPART = _fifth_of_a_future_month()
+_RETURN = _DEPART + timedelta(days=7)
+
+# Outbound/return and range start/end, kept 7 days apart as the originals were.
+DEPART_DATE = _DEPART.strftime("%Y-%m-%d")
+RETURN_DATE = _RETURN.strftime("%Y-%m-%d")
+START_DATE = _future_date(180)
+END_DATE = _future_date(187)
+
+# The same two dates as a user might type them — no zero padding. The
+# builders are expected to normalize these into DEPART_DATE / RETURN_DATE.
+DEPART_DATE_LOOSE = f"{_DEPART.year}-{_DEPART.month}-{_DEPART.day}"
+RETURN_DATE_LOOSE = f"{_RETURN.year}-{_RETURN.month}-{_RETURN.day}"
 
 
 class TestNormalizeDate:
@@ -36,20 +80,20 @@ class TestBuildFlightSegments:
         segments, _ = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-1-15",
+            departure_date=DEPART_DATE_LOOSE,
         )
-        assert segments[0].travel_date == "2027-01-15"
+        assert segments[0].travel_date == DEPART_DATE
 
     def test_normalizes_return_date(self):
         segments, trip_type = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-1-15",
-            return_date="2027-1-22",
+            departure_date=DEPART_DATE_LOOSE,
+            return_date=RETURN_DATE_LOOSE,
         )
         assert trip_type == TripType.ROUND_TRIP
-        assert segments[0].travel_date == "2027-01-15"
-        assert segments[1].travel_date == "2027-01-22"
+        assert segments[0].travel_date == DEPART_DATE
+        assert segments[1].travel_date == RETURN_DATE
 
 
 class TestBuildDateSearchSegments:
@@ -59,21 +103,21 @@ class TestBuildDateSearchSegments:
         segments, _ = build_date_search_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            start_date="2027-1-15",
+            start_date=DEPART_DATE_LOOSE,
         )
-        assert segments[0].travel_date == "2027-01-15"
+        assert segments[0].travel_date == DEPART_DATE
 
     def test_normalizes_start_date_round_trip(self):
         segments, trip_type = build_date_search_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            start_date="2027-1-15",
+            start_date=DEPART_DATE_LOOSE,
             is_round_trip=True,
             trip_duration=7,
         )
         assert trip_type == TripType.ROUND_TRIP
-        assert segments[0].travel_date == "2027-01-15"
-        assert segments[1].travel_date == "2027-01-22"
+        assert segments[0].travel_date == DEPART_DATE
+        assert segments[1].travel_date == RETURN_DATE
 
 
 class TestBuildFlightSegmentsMultiAirport:
@@ -83,7 +127,7 @@ class TestBuildFlightSegmentsMultiAirport:
         segments, _ = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-03-15",
+            departure_date=START_DATE,
         )
         assert segments[0].departure_airport == [[Airport.JFK, 0]]
         assert segments[0].arrival_airport == [[Airport.LAX, 0]]
@@ -92,7 +136,7 @@ class TestBuildFlightSegmentsMultiAirport:
         segments, _ = build_flight_segments(
             origin=[Airport.JFK, Airport.LGA],
             destination=Airport.LHR,
-            departure_date="2027-03-15",
+            departure_date=START_DATE,
         )
         assert segments[0].departure_airport == [[Airport.JFK, 0], [Airport.LGA, 0]]
         assert segments[0].arrival_airport == [[Airport.LHR, 0]]
@@ -101,7 +145,7 @@ class TestBuildFlightSegmentsMultiAirport:
         segments, _ = build_flight_segments(
             origin=Airport.JFK,
             destination=[Airport.LHR, Airport.CDG],
-            departure_date="2027-03-15",
+            departure_date=START_DATE,
         )
         assert segments[0].departure_airport == [[Airport.JFK, 0]]
         assert segments[0].arrival_airport == [[Airport.LHR, 0], [Airport.CDG, 0]]
@@ -110,7 +154,7 @@ class TestBuildFlightSegmentsMultiAirport:
         segments, _ = build_flight_segments(
             origin=[Airport.JFK, Airport.LGA, Airport.EWR],
             destination=[Airport.LHR, Airport.CDG],
-            departure_date="2027-03-15",
+            departure_date=START_DATE,
         )
         assert segments[0].departure_airport == [
             [Airport.JFK, 0],
@@ -123,8 +167,8 @@ class TestBuildFlightSegmentsMultiAirport:
         segments, trip_type = build_flight_segments(
             origin=[Airport.JFK, Airport.LGA],
             destination=[Airport.LHR, Airport.CDG],
-            departure_date="2027-03-15",
-            return_date="2027-03-22",
+            departure_date=START_DATE,
+            return_date=END_DATE,
         )
         assert trip_type == TripType.ROUND_TRIP
         assert segments[0].departure_airport == [[Airport.JFK, 0], [Airport.LGA, 0]]
@@ -140,7 +184,7 @@ class TestBuildDateSearchSegmentsMultiAirport:
         segments, _ = build_date_search_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            start_date="2027-03-15",
+            start_date=START_DATE,
         )
         assert segments[0].departure_airport == [[Airport.JFK, 0]]
         assert segments[0].arrival_airport == [[Airport.LAX, 0]]
@@ -149,7 +193,7 @@ class TestBuildDateSearchSegmentsMultiAirport:
         segments, _ = build_date_search_segments(
             origin=[Airport.JFK, Airport.LGA],
             destination=[Airport.LHR, Airport.CDG],
-            start_date="2027-03-15",
+            start_date=START_DATE,
         )
         assert segments[0].departure_airport == [[Airport.JFK, 0], [Airport.LGA, 0]]
         assert segments[0].arrival_airport == [[Airport.LHR, 0], [Airport.CDG, 0]]
@@ -158,7 +202,7 @@ class TestBuildDateSearchSegmentsMultiAirport:
         segments, trip_type = build_date_search_segments(
             origin=[Airport.JFK, Airport.LGA],
             destination=[Airport.LHR, Airport.CDG],
-            start_date="2027-03-15",
+            start_date=START_DATE,
             is_round_trip=True,
             trip_duration=7,
         )
@@ -186,8 +230,8 @@ class TestReturnTimeRestrictions:
         segments, _ = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=DEPART_DATE,
+            return_date=RETURN_DATE,
             time_restrictions=self.OUT,
         )
         assert segments[0].time_restrictions == self.OUT
@@ -197,8 +241,8 @@ class TestReturnTimeRestrictions:
         segments, _ = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=DEPART_DATE,
+            return_date=RETURN_DATE,
             time_restrictions=self.OUT,
             return_time_restrictions=self.RET,
         )
@@ -211,8 +255,8 @@ class TestReturnTimeRestrictions:
         segments, _ = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=DEPART_DATE,
+            return_date=RETURN_DATE,
             return_time_restrictions=self.RET,
         )
         assert segments[0].time_restrictions is None
@@ -229,7 +273,7 @@ class TestReturnTimeRestrictions:
             build_flight_segments(
                 origin=Airport.JFK,
                 destination=Airport.LAX,
-                departure_date="2027-01-15",
+                departure_date=DEPART_DATE,
                 time_restrictions=self.OUT,
                 return_time_restrictions=self.RET,
             )
@@ -238,7 +282,7 @@ class TestReturnTimeRestrictions:
         segments, trip_type = build_flight_segments(
             origin=Airport.JFK,
             destination=Airport.LAX,
-            departure_date="2027-01-15",
+            departure_date=DEPART_DATE,
             time_restrictions=self.OUT,
         )
         assert trip_type == TripType.ONE_WAY
@@ -250,8 +294,8 @@ class TestReturnTimeRestrictions:
         segments, _ = build_flight_segments(
             origin=[Airport.JFK, Airport.LGA],
             destination=[Airport.LHR, Airport.CDG],
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=DEPART_DATE,
+            return_date=RETURN_DATE,
             time_restrictions=self.OUT,
             return_time_restrictions=self.RET,
         )

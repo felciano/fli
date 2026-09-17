@@ -7,6 +7,7 @@ _flight_extras, and the bare-except error path in _execute_flight_search.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,6 +34,24 @@ def _make_raiser(exc: BaseException):
         raise exc
 
     return _raiser
+
+
+def _future_date(days_ahead: int) -> str:
+    """Return a date this many days from now, in YYYY-MM-DD format.
+
+    These search dates are arbitrary, but they reach ``FlightSegment``,
+    which rejects a date in the past — so a hardcoded literal is a test
+    failure scheduled for a future date. Deriving from today avoids that.
+    """
+    today_utc = datetime.now(timezone.utc).date()
+    return (today_utc + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+
+# One-way and round-trip date pairs, keeping the original spacing.
+DEPART_DATE = _future_date(75)
+RETURN_DATE = _future_date(84)
+RT_DEPART_DATE = _future_date(120)
+RT_RETURN_DATE = _future_date(127)
 
 
 class TestAirlineCode:
@@ -217,7 +236,7 @@ class TestExecuteFlightSearchNetworkError:
         return FlightSearchParams(
             origin="JFK",
             destination="LHR",
-            departure_date="2026-12-01",
+            departure_date=DEPART_DATE,
         )
 
     def test_search_client_error_returns_success_false(self, monkeypatch, valid_params):
@@ -303,7 +322,7 @@ class TestGoogleFlightsUrl:
         defaults = {
             "origins": [Airport.JFK],
             "destinations": [Airport.LHR],
-            "departure_date": "2026-12-01",
+            "departure_date": DEPART_DATE,
             "return_date": None,
             "currency": None,
             "language": None,
@@ -325,11 +344,11 @@ class TestGoogleFlightsUrl:
         assert url.startswith("https://www.google.com/travel/flights?q=")
         assert "JFK" in url
         assert "LHR" in url
-        assert "2026-12-01" in url
+        assert DEPART_DATE in url
 
     def test_round_trip_includes_return_date(self):
-        url = self._url(return_date="2026-12-10")
-        assert "2026-12-10" in url
+        url = self._url(return_date=RETURN_DATE)
+        assert RETURN_DATE in url
 
     def test_locale_params_appended(self):
         url = self._url(currency="EUR", language="en-GB", country="GB")
@@ -462,7 +481,7 @@ class TestSerializeBookingOption:
 class TestSearchReturnsBookingUrl:
     @pytest.fixture
     def params(self):
-        return FlightSearchParams(origin="JFK", destination="LHR", departure_date="2026-12-01")
+        return FlightSearchParams(origin="JFK", destination="LHR", departure_date=DEPART_DATE)
 
     def test_booking_url_present_on_success(self, monkeypatch, params):
         flight = _make_bookable_flight()
@@ -520,7 +539,7 @@ class TestSearchReturnsBookingUrl:
 class TestExecuteBookingOptions:
     @pytest.fixture
     def params(self):
-        return FlightSearchParams(origin="JFK", destination="LHR", departure_date="2026-12-01")
+        return FlightSearchParams(origin="JFK", destination="LHR", departure_date=DEPART_DATE)
 
     def test_returns_options_with_booking_url(self, monkeypatch, params):
         flight = _make_bookable_flight()
@@ -755,8 +774,8 @@ class TestReturnDepartureWindow:
         params = FlightSearchParams(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=RT_DEPART_DATE,
+            return_date=RT_RETURN_DATE,
             departure_window="6-14",
             return_departure_window="10-22",
         )
@@ -771,8 +790,8 @@ class TestReturnDepartureWindow:
         params = FlightSearchParams(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=RT_DEPART_DATE,
+            return_date=RT_RETURN_DATE,
             departure_window="6-14",
         )
         filters, _, _, _ = _build_flight_filters(params)
@@ -791,8 +810,8 @@ class TestReturnDepartureWindow:
         params = FlightSearchParams(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=RT_DEPART_DATE,
+            return_date=RT_RETURN_DATE,
         )
         filters, _, _, _ = _build_flight_filters(params)
         assert filters.flight_segments[0].time_restrictions.latest_departure == 14
@@ -805,8 +824,8 @@ class TestReturnDepartureWindow:
         params = FlightSearchParams(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=RT_DEPART_DATE,
+            return_date=RT_RETURN_DATE,
             return_departure_window="10-22",
         )
         filters, _, _, _ = _build_flight_filters(params)
@@ -818,7 +837,7 @@ class TestReturnDepartureWindow:
         params = FlightSearchParams(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
+            departure_date=RT_DEPART_DATE,
             return_departure_window="10-22",
         )
         result = _execute_flight_search(params)
@@ -835,8 +854,8 @@ class TestReturnDepartureWindow:
         server.search_flights(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=RT_DEPART_DATE,
+            return_date=RT_RETURN_DATE,
             departure_window="6-14",
             return_departure_window="10-22",
         )
@@ -855,8 +874,8 @@ class TestReturnDepartureWindow:
         server.get_booking_options(
             origin="JFK",
             destination="LAX",
-            departure_date="2027-01-15",
-            return_date="2027-01-22",
+            departure_date=RT_DEPART_DATE,
+            return_date=RT_RETURN_DATE,
             departure_window="6-14",
             return_departure_window="10-22",
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,25 @@ from fli.search.exceptions import (
     SearchHTTPError,
     SearchTimeoutError,
 )
+
+
+def _future_date(days_ahead: int) -> str:
+    """Return a date this many days from now, in YYYY-MM-DD format.
+
+    The dates here are arbitrary — these tests are about error reporting —
+    but they reach ``FlightSegment``, which rejects a date in the past, so
+    a hardcoded literal is a failure scheduled for a future date.
+    """
+    today_utc = datetime.now(timezone.utc).date()
+    return (today_utc + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+
+DEPART_DATE = _future_date(100)
+LEG2_DATE = _future_date(104)
+LEG3_DATE = _future_date(110)
+JSON_ERROR_DATE = _future_date(38)
+BAD_LEG_DATE = _future_date(120)
+BAD_LEG_ALT_DATE = _future_date(151)
 
 
 @pytest.fixture
@@ -89,7 +109,7 @@ def test_search_command_handles_timeout_cleanly(runner, monkeypatch, tmp_path):
     monkeypatch.setattr("curl_cffi.requests.Session.get", fake_request)
     monkeypatch.setattr("curl_cffi.requests.Session.post", fake_request)
 
-    result = runner.invoke(app, ["flights", "SEA", "NRT", "2026-12-26"])
+    result = runner.invoke(app, ["flights", "SEA", "NRT", DEPART_DATE])
 
     assert result.exit_code == 1
     # Friendly message — no raw curl traceback in the output.
@@ -109,11 +129,11 @@ def test_multi_command_reports_unsupported(runner, tmp_path):
         [
             "multi",
             "-l",
-            "SEA,NRT,2026-12-26",
+            f"SEA,NRT,{DEPART_DATE}",
             "-l",
-            "NRT,HKG,2026-12-30",
+            f"NRT,HKG,{LEG2_DATE}",
             "-l",
-            "HKG,SEA,2027-01-05",
+            f"HKG,SEA,{LEG3_DATE}",
         ],
     )
 
@@ -218,7 +238,7 @@ def test_flights_command_json_error_includes_log_path(runner, monkeypatch, tmp_p
 
     result = runner.invoke(
         app,
-        ["flights", "JFK", "LHR", "2026-10-25", "--format", "json"],
+        ["flights", "JFK", "LHR", JSON_ERROR_DATE, "--format", "json"],
     )
 
     assert result.exit_code == 1
@@ -283,7 +303,13 @@ class TestUnwritableLogDir:
         self._break_log_dir(monkeypatch, tmp_path)
         result = runner.invoke(
             app,
-            ["multi", "--leg", "SEA,BFI,HKG,2027-01-15", "--leg", "PEK,SEA,2027-02-15"],
+            [
+                "multi",
+                "--leg",
+                f"SEA,BFI,HKG,{BAD_LEG_DATE}",
+                "--leg",
+                f"PEK,SEA,{BAD_LEG_ALT_DATE}",
+            ],
         )
         assert result.exit_code != 0
         assert "Invalid leg format" in result.stdout + result.stderr
