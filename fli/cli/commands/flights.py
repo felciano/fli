@@ -311,7 +311,7 @@ def _search_flights_core(
                 error_type=error_type,
                 query=query,
             )
-            payload["error"]["log_path"] = str(log_path)
+            payload["error"]["log_path"] = str(log_path) if log_path else None
             emit_json(payload)
             raise typer.Exit(1) from e
         raise report_cli_error(e, command="flights") from e
@@ -324,7 +324,7 @@ def _search_flights_core(
                 error_type=error_type,
                 query=query,
             )
-            payload["error"]["log_path"] = str(log_path)
+            payload["error"]["log_path"] = str(log_path) if log_path else None
             emit_json(payload)
             raise typer.Exit(1) from e
         raise report_cli_error(e, command="flights") from e

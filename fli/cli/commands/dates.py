@@ -593,7 +593,7 @@ def dates(
                 message=message,
                 error_type=error_type,
             )
-            payload["error"]["log_path"] = str(log_path)
+            payload["error"]["log_path"] = str(log_path) if log_path else None
             emit_json(payload)
             raise typer.Exit(1) from e
         raise report_cli_error(e, command="dates") from e
@@ -654,7 +654,7 @@ def dates(
                 message=message,
                 error_type=error_type,
             )
-            payload["error"]["log_path"] = str(log_path)
+            payload["error"]["log_path"] = str(log_path) if log_path else None
             emit_json(payload)
             raise typer.Exit(1) from e
         raise report_cli_error(e, command="dates") from e

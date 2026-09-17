@@ -11,6 +11,22 @@ from fli.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _tmp_cli_log_dir(monkeypatch, tmp_path):
+    """Keep CLI error logs out of the real ``~/.fli/logs``.
+
+    ``fli.cli.errors`` writes a traceback file next to the user's home on
+    every reported error, so invoking the CLI under test littered the
+    developer's own ``~/.fli/logs`` — and made these tests depend on
+    whether ``$HOME`` happens to be writable. That coupling is why two
+    ``test_multi.py`` cases passed in CI but failed under a sandbox with a
+    ``PermissionError`` about ``~/.fli`` rather than the assertion being
+    tested. Redirecting the directory makes the suite answer the same way
+    everywhere.
+    """
+    monkeypatch.setattr("fli.cli.errors._LOG_DIR", tmp_path / "fli-logs")
+
+
 @pytest.fixture
 def mock_search_flights(monkeypatch):
     """Mock the SearchFlights class."""

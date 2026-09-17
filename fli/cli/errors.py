@@ -40,9 +40,22 @@ def _friendly_message(exc: BaseException) -> str:
     return f"Unexpected error: {exc.__class__.__name__}: {exc}"
 
 
-def _write_log(exc: BaseException, *, command: str | None = None) -> Path:
-    """Write the full traceback for ``exc`` to a log file and return the path."""
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+def _write_log(exc: BaseException, *, command: str | None = None) -> Path | None:
+    """Write the full traceback for ``exc`` to a log file and return the path.
+
+    Returns None when the log could not be written. This module exists to
+    replace an ugly traceback with a clean message, so it must not raise:
+    creating ``~/.fli/logs`` fails on a read-only home, in a locked-down
+    container, or under a sandbox, and letting that escape meant the user
+    saw a ``PermissionError`` about ``~/.fli`` instead of the error they
+    actually hit. Losing the log file is a much smaller harm than losing
+    the diagnosis.
+    """
+    try:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        _logger.debug("could not create log directory %s", _LOG_DIR, exc_info=True)
+        return None
     # Microsecond precision so rapid-fire errors (e.g. tests, parallel
     # legs) don't collide on the same filename and silently overwrite.
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -59,7 +72,11 @@ def _write_log(exc: BaseException, *, command: str | None = None) -> Path:
     lines.append("traceback:")
     lines.append("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
 
-    log_path.write_text("\n".join(lines), encoding="utf-8")
+    try:
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+    except OSError:
+        _logger.debug("could not write log file %s", log_path, exc_info=True)
+        return None
     return log_path
 
 
@@ -79,7 +96,8 @@ def report_cli_error(
     message = _friendly_message(exc)
 
     console.print(f"[red]Error:[/red] {message}")
-    console.print(f"[dim]Full traceback written to {log_path}[/dim]")
+    if log_path is not None:
+        console.print(f"[dim]Full traceback written to {log_path}[/dim]")
 
     # Still log at debug for anyone who wired up python logging.
     _logger.debug("CLI error", exc_info=exc)
@@ -87,8 +105,14 @@ def report_cli_error(
     return typer.Exit(exit_code)
 
 
-def json_error_payload(exc: BaseException, *, command: str | None = None) -> tuple[str, str, Path]:
-    """Return ``(message, error_type, log_path)`` for JSON-mode error output."""
+def json_error_payload(
+    exc: BaseException, *, command: str | None = None
+) -> tuple[str, str, Path | None]:
+    """Return ``(message, error_type, log_path)`` for JSON-mode error output.
+
+    ``log_path`` is None when no log file could be written; callers should
+    emit JSON null rather than the string "None".
+    """
     log_path = _write_log(exc, command=command)
     if isinstance(exc, SearchTimeoutError):
         return str(exc), "timeout", log_path

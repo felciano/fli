@@ -227,3 +227,63 @@ def test_flights_command_json_error_includes_log_path(runner, monkeypatch, tmp_p
     assert payload["error"]["type"] == "connection_error"
     assert "log_path" in payload["error"]
     assert Path(payload["error"]["log_path"]).exists()
+
+
+class TestUnwritableLogDir:
+    """The error reporter must never replace the user's error with its own.
+
+    ``_write_log`` creates ``~/.fli/logs`` on demand. That can fail — a
+    read-only home, a locked-down container, a sandbox. When it did, the
+    PermissionError propagated out of ``report_cli_error`` and the user saw
+    it instead of the message the reporter existed to print.
+    """
+
+    @staticmethod
+    def _break_log_dir(monkeypatch, tmp_path):
+        """Point _LOG_DIR somewhere mkdir cannot succeed."""
+
+        def _refuse(*_args, **_kwargs):
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr("fli.cli.errors._LOG_DIR", tmp_path / "nope" / "logs")
+        monkeypatch.setattr(Path, "mkdir", _refuse)
+
+    def test_write_log_returns_none_instead_of_raising(self, monkeypatch, tmp_path):
+        self._break_log_dir(monkeypatch, tmp_path)
+        try:
+            raise SearchTimeoutError("backend slow")
+        except SearchTimeoutError as exc:
+            assert _write_log(exc, command="flights") is None
+
+    def test_report_cli_error_still_reports_the_real_error(self, monkeypatch, tmp_path, capsys):
+        self._break_log_dir(monkeypatch, tmp_path)
+        try:
+            raise SearchTimeoutError("backend slow")
+        except SearchTimeoutError as exc:
+            result = report_cli_error(exc, command="flights")
+
+        assert result.exit_code == 1
+        out = capsys.readouterr().out
+        assert "Request timed out" in out
+        assert "backend slow" in out
+        # No log was written, so don't point the user at a file.
+        assert "traceback written to" not in out
+
+    def test_json_error_payload_reports_a_null_log_path(self, monkeypatch, tmp_path):
+        self._break_log_dir(monkeypatch, tmp_path)
+        message, error_type, log_path = json_error_payload(SearchTimeoutError("slow"))
+        assert error_type == "timeout"
+        assert message == "slow"
+        assert log_path is None
+
+    def test_cli_surfaces_a_usage_error_with_no_writable_log_dir(
+        self, monkeypatch, tmp_path, runner
+    ):
+        """The regression that broke tests/cli/test_multi.py in a sandbox."""
+        self._break_log_dir(monkeypatch, tmp_path)
+        result = runner.invoke(
+            app,
+            ["multi", "--leg", "SEA,BFI,HKG,2027-01-15", "--leg", "PEK,SEA,2027-02-15"],
+        )
+        assert result.exit_code != 0
+        assert "Invalid leg format" in result.stdout + result.stderr
