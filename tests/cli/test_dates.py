@@ -568,3 +568,60 @@ def test_dates_sweep_json_error_payload_carries_the_range(runner, mock_search_da
     assert payload["success"] is False
     assert payload["query"]["min_duration"] == 4
     assert payload["query"]["max_duration"] == 6
+
+
+def test_dates_json_query_echoes_every_carrier_filter(runner, mock_search_dates, mock_console):
+    """The query echo must report exclude/alliance filters, not just --airlines."""
+    mock_search_dates.search.return_value = []
+
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "-a",
+            "DL",
+            "--exclude-airlines",
+            "BA",
+            "--alliance",
+            "ONEWORLD",
+            "--exclude-alliance",
+            "SKYTEAM",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    query = json.loads(result.stdout)["query"]
+    assert query["airlines"] == ["DL"]
+    assert query["exclude_airlines"] == ["BA"]
+    assert query["alliances"] == ["ONEWORLD"]
+    assert query["exclude_alliances"] == ["SKYTEAM"]
+
+
+def test_dates_json_error_query_echoes_carrier_filters(runner, mock_search_dates, mock_console):
+    """Error-path JSON keeps the carrier keys the success path echoes."""
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--from",
+            "2024-13-45",
+            "--exclude-airlines",
+            "BA",
+            "--alliance",
+            "ONEWORLD",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    query = json.loads(result.stdout)["query"]
+    assert query["exclude_airlines"] == ["BA"]
+    assert query["alliances"] == ["ONEWORLD"]
+    assert query["exclude_alliances"] is None

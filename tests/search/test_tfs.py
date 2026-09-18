@@ -103,6 +103,12 @@ def _filters(segments, **kwargs) -> FlightSearchFilters:
         seat_type=kwargs.get("seat_type", SeatType.ECONOMY),
         airlines=kwargs.get("airlines"),
         airlines_exclude=kwargs.get("airlines_exclude"),
+        # Forwarded rather than dropped: a kwarg this helper silently ignores
+        # makes the test that passes it vacuous, which is how a double-drop
+        # between the airline and alliance include lists went unnoticed.
+        alliances=kwargs.get("alliances"),
+        alliances_exclude=kwargs.get("alliances_exclude"),
+        layover_restrictions=kwargs.get("layover_restrictions"),
         max_duration=kwargs.get("max_duration"),
         price_limit=kwargs.get("price_limit"),
     )
@@ -349,6 +355,42 @@ class TestClientSideFilters:
         kept = apply_client_side_filters(flights, spec)
         assert [leg.airline for f in kept for leg in f.legs] == [Airline.AA]
 
+    def test_alliance_include_suspends_the_local_airline_test(self):
+        """Airlines and alliances share one OR'd include list on the wire.
+
+        ``build_tfs`` writes both into carrier field 6, which Google reads as
+        a union, so it back-fills alliance rows the caller asked for. The
+        local include test only knows the airline half — re-applying it here
+        would discard exactly those rows. Regression guard for a double-drop
+        introduced when airline encoding was added.
+        """
+        flights = [_flight(Airline.UA), _flight(Airline.AA)]
+        spec = _filters(
+            [("JFK", "LAX", OUTBOUND_DATE)],
+            airlines=[Airline.AA],
+            alliances=[Alliance.STAR_ALLIANCE],
+        )
+        kept = apply_client_side_filters(flights, spec)
+        assert [leg.airline for f in kept for leg in f.legs] == [Airline.UA, Airline.AA]
+
+    def test_airline_include_still_applies_without_an_alliance(self):
+        """The safety net stays on when airlines are the only include filter."""
+        flights = [_flight(Airline.UA), _flight(Airline.AA)]
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines=[Airline.AA])
+        kept = apply_client_side_filters(flights, spec)
+        assert [leg.airline for f in kept for leg in f.legs] == [Airline.AA]
+
+    def test_alliance_include_does_not_weaken_the_exclude_filter(self):
+        """Exclude is a drop rule, so the local pass can only ever be a subset."""
+        flights = [_flight(Airline.UA), _flight(Airline.AA)]
+        spec = _filters(
+            [("JFK", "LAX", OUTBOUND_DATE)],
+            airlines_exclude=[Airline.AA],
+            alliances=[Alliance.STAR_ALLIANCE],
+        )
+        kept = apply_client_side_filters(flights, spec)
+        assert [leg.airline for f in kept for leg in f.legs] == [Airline.UA]
+
     def test_airline_exclude_drops_matching_carriers(self):
         flights = [_flight(Airline.AA), _flight(Airline.DL)]
         spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines_exclude=[Airline.AA])
@@ -449,13 +491,79 @@ class TestUnsupportedFilters:
         assert "exclude_basic_economy" in unsupported_filters(spec)
 
 
-class TestAllianceAndLayoverEncoding:
-    """Alliances and layover bounds ride in the request, not a post-filter.
+class TestCarrierAllianceAndLayoverEncoding:
+    """Carriers, alliances and layover bounds ride in the request.
 
-    Google reads both out of the segment, so a search that sets them comes
-    back already filtered — and back-filled, which a client-side filter
-    can't do.
+    Google reads all three out of the segment, so a search that sets them
+    comes back already filtered — and back-filled, which a client-side
+    filter can't do. Airline codes and alliance names share one pair of
+    lists (segment fields 6 and 7).
     """
+
+    def test_airlines_ride_in_the_carrier_include_list(self):
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines=[Airline.AA])
+        raw = _decode(build_tfs(spec))
+        # Field 6, length-delimited: tag 0x32, length 2, then the code.
+        assert b"\x32\x02AA" in raw
+
+    def test_airlines_exclude_uses_the_exclude_list(self):
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines_exclude=[Airline.BA])
+        raw = _decode(build_tfs(spec))
+        # Field 7, length-delimited: tag 0x3a, length 2, then the code.
+        assert b"\x3a\x02BA" in raw
+        assert b"\x32\x02BA" not in raw, "an excluded airline must not reach the include list"
+
+    def test_digit_leading_airline_codes_drop_the_enum_underscore(self):
+        """``Airline._9W`` is the enum's spelling of IATA ``9W``, not the code."""
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines=[Airline._9W])
+        raw = _decode(build_tfs(spec))
+        assert b"\x32\x029W" in raw
+        assert b"_9W" not in raw
+
+    def test_airlines_and_alliances_share_the_carrier_list(self):
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines=[Airline.AA])
+        spec.alliances = [Alliance.STAR_ALLIANCE]
+        raw = _decode(build_tfs(spec))
+        assert b"\x32\x02AA" in raw
+        assert b"\x32\x0dSTAR_ALLIANCE" in raw
+        assert raw.index(b"\x32\x02AA") < raw.index(b"\x32\x0dSTAR_ALLIANCE")
+
+    def test_alliance_only_searches_keep_their_bytes(self):
+        """Merging airlines in must not disturb a token that sets none."""
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)])
+        spec.alliances = [Alliance.ONEWORLD]
+        raw = _decode(build_tfs(spec))
+        assert b"\x32\x08ONEWORLD" in raw
+        assert raw.count(b"\x32\x08ONEWORLD") == 1
+
+    def test_date_search_filters_encode_their_carriers(self, monkeypatch):
+        """``build_tfs`` reads carriers by ``getattr`` — pin the dates model in."""
+        from fli.models import DateSearchFilters
+        from fli.models.google_flights import dates as _dates
+
+        # ``dates`` imports the clock by value, so the module-level pin in
+        # ``_pin_clock_to_capture_date`` does not reach its range validator.
+        monkeypatch.setattr(_dates, "earliest_searchable_date", lambda: CAPTURE_DATE)
+        filters = DateSearchFilters(
+            trip_type=TripType.ONE_WAY,
+            passenger_info=PassengerInfo(adults=1),
+            flight_segments=[
+                FlightSegment(
+                    departure_airport=[[Airport.JFK, 0]],
+                    arrival_airport=[[Airport.LAX, 0]],
+                    travel_date=OUTBOUND_DATE,
+                )
+            ],
+            stops=MaxStops.ANY,
+            seat_type=SeatType.ECONOMY,
+            airlines=[Airline.AA],
+            airlines_exclude=[Airline.BA],
+            from_date=OUTBOUND_DATE,
+            to_date=OUTBOUND_DATE,
+        )
+        raw = _decode(build_tfs(filters, travel_dates=[OUTBOUND_DATE]))
+        assert b"\x32\x02AA" in raw
+        assert b"\x3a\x02BA" in raw
 
     def test_alliances_ride_in_the_carrier_include_list(self):
         spec = _filters([("JFK", "LAX", OUTBOUND_DATE)])

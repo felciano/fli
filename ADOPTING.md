@@ -148,6 +148,20 @@ future" to "To date cannot be in the past".
   reach Google as *fares*, not just as accepted flags — 3 adults prices at
   exactly 3× the 1-adult fare, while 2 adults + 1 child comes in below it.
 
-`KNOWN_ISSUES.md` records three verified defects left unfixed on purpose, the
-most significant being that `fli dates` silently ignores `--airlines` /
-`--exclude-airlines`.
+`KNOWN_ISSUES.md` records two verified defects left unfixed on purpose. A
+third — `fli dates` silently ignoring `--airlines` / `--exclude-airlines` —
+has since been fixed by encoding the carrier lists into the `tfs` token.
+
+That fix is verified against the live service, not just against our own
+encoder. LHR→PIT over 2026-11-02..08 returns $544 on all seven dates
+unfiltered; `--exclude-airlines B6` moves every one of them (573, 564, 564,
+629, 620, 654, 614) and `--airlines BA` moves them again (935, 935, 935, 979,
+973, 654, 660). Both halves of the filter therefore reach Google on the
+search-page transport.
+
+Note that the original repro in `KNOWN_ISSUES.md` used `--exclude-airlines BA`
+on this route, and BA is not the cheapest carrier on it — JetBlue is. That
+repro would have shown an unchanged cheapest price whether or not the filter
+worked. Its conclusion was right for the code at the time, but the method
+could not have told the difference; excluding the carrier that actually holds
+the cheapest fare is what makes the check decisive.

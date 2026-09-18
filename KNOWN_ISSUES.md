@@ -4,35 +4,7 @@ Defects verified on this fork's `integration` branch and deliberately left
 unfixed, each because the fix belongs in its own change rather than bolted onto
 the batch that surfaced it. Every entry below was reproduced, not inferred.
 
-## 1. `fli dates` silently ignores airline filters
-
-**Severity:** high — a filter the caller believes is active is never applied,
-and nothing says so.
-
-`--airlines` / `--exclude-airlines` (and the MCP `search_dates` equivalents) are
-accepted, validated, and then dropped. `fli/search/_tfs.py::build_tfs` encodes
-carrier lists for the *flights* path only; the date sweep has no post-filter
-stage to compensate, because it returns `(date, price)` pairs rather than
-itineraries, so there is nothing carrying an airline to filter on.
-
-Reproduce:
-
-```console
-$ fli dates LHR PIT --format json                      # 60 dates, cheapest $551.00
-$ fli dates LHR PIT --exclude-airlines BA --format json # 60 dates, cheapest $551.00
-```
-
-Identical result sets. The JSON `query` echo compounds it — it reports
-`"airlines": null` and omits `exclude_airlines` entirely, so a consumer cannot
-tell the filter was ignored.
-
-**Why it is not fixed here:** the honest options are to encode carriers into the
-date-sweep request (requires finding the field, if one exists on the page
-transport) or to reject the flags with a clear error the way `--return-time`
-rejects a one-way. Both are design decisions, not cleanups. Surfaced while
-reviewing upstream PR #195.
-
-## 2. A past date inside the one-day grace window reports a transport failure
+## 1. A past date inside the one-day grace window reports a transport failure
 
 **Severity:** medium — misleading error, wrong debugging path.
 
@@ -58,7 +30,7 @@ fix is to recognise this specific case and re-message it, which means deciding
 how confidently a no-payload response can be attributed to a past date versus a
 genuine block. Surfaced while reviewing upstream PR #215.
 
-## 3. The CLI prints raw Pydantic dumps for validation errors
+## 2. The CLI prints raw Pydantic dumps for validation errors
 
 **Severity:** low — ugly, pre-existing, MCP is unaffected.
 

@@ -400,6 +400,15 @@ def dates(
                 if parsed_airlines
                 else None
             ),
+            "exclude_airlines": (
+                [airline.name.lstrip("_") for airline in parsed_exclude_airlines]
+                if parsed_exclude_airlines
+                else None
+            ),
+            "alliances": [a.value for a in parsed_alliances] if parsed_alliances else None,
+            "exclude_alliances": (
+                [a.value for a in parsed_exclude_alliances] if parsed_exclude_alliances else None
+            ),
             "sort_by_price": sort_by_price,
             "days": [day.value for day in selected_days],
             "passengers": passengers,
@@ -562,6 +571,9 @@ def dates(
                             else departure_window
                         ),
                         "airlines": airlines,
+                        "exclude_airlines": exclude_airlines,
+                        "alliances": alliance,
+                        "exclude_alliances": exclude_alliance,
                         "sort_by_price": sort_by_price,
                         "days": [
                             day.value
@@ -623,6 +635,9 @@ def dates(
                             else departure_window
                         ),
                         "airlines": airlines,
+                        "exclude_airlines": exclude_airlines,
+                        "alliances": alliance,
+                        "exclude_alliances": exclude_alliance,
                         "sort_by_price": sort_by_price,
                         "days": [
                             day.value

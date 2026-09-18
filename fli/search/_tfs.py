@@ -15,9 +15,9 @@ addressed by a ``tfs`` protobuf parameter instead of the ``f.req`` JSON
 struct, which is what this module builds.
 
 Scope note: ``tfs`` carries trip type, segments, stop limit, cabin,
-passengers, alliances and layover restrictions. Filters with no known
-``tfs`` field (airline include/exclude, price cap, duration, departure
-window) are applied to the decoded results instead — see
+passengers, airline include/exclude, alliances and layover restrictions.
+Filters with no known ``tfs`` field (price cap, duration, departure window)
+are applied to the decoded results instead — see
 :func:`apply_client_side_filters`. Anything that can be
 neither encoded nor filtered after the fact is reported by
 :func:`unsupported_filters` so the caller can warn rather than silently
@@ -122,9 +122,14 @@ def build_tfs(filters: Any, *, travel_dates: list[str] | None = None) -> str:
         for _ in range(getattr(filters.passenger_info, kind, 0))
     ]
 
-    # Google reads alliances out of the same carrier lists as airline codes.
-    carriers = [a.value for a in (getattr(filters, "alliances", None) or [])]
-    carriers_exclude = [a.value for a in (getattr(filters, "alliances_exclude", None) or [])]
+    # Airline codes and alliance names share one pair of carrier lists
+    # (segment fields 6 and 7), so both ride in together.
+    carriers = [_iata(a) for a in (getattr(filters, "airlines", None) or [])] + [
+        a.value for a in (getattr(filters, "alliances", None) or [])
+    ]
+    carriers_exclude = [_iata(a) for a in (getattr(filters, "airlines_exclude", None) or [])] + [
+        a.value for a in (getattr(filters, "alliances_exclude", None) or [])
+    ]
     layovers = getattr(filters, "layover_restrictions", None)
 
     segments = b""
@@ -208,8 +213,28 @@ def apply_client_side_filters(flights: list[Any], filters: Any) -> list[Any]:
     Google would have applied these server-side and back-filled the result
     list, so a filtered search returns fewer options here than the old RPC
     did — but every option it does return honours the filter.
+
+    The airline branch is a safety net rather than the only enforcement:
+    :func:`build_tfs` now encodes the carrier lists, so Google has already
+    filtered and back-filled.
+
+    It is suspended when an alliance include is also set. Airlines and
+    alliances share one include list on the wire, which Google reads as a
+    union, so it deliberately returns rows whose carrier is in the alliance
+    but not in ``airlines``. There is no alliance-to-member table here to
+    reproduce that union locally, and re-applying the airline-only test
+    would discard precisely the rows the caller asked for. The exclude
+    branch needs no such guard: it can only drop rows Google has already
+    dropped, so the local pass is always a subset.
     """
-    airlines = {_iata(a) for a in (getattr(filters, "airlines", None) or [])}
+    # See the note above: an alliance include makes the wire filter a union
+    # this function cannot reproduce, so it must not second-guess it.
+    alliance_include = bool(getattr(filters, "alliances", None))
+    airlines = (
+        set()
+        if alliance_include
+        else {_iata(a) for a in (getattr(filters, "airlines", None) or [])}
+    )
     excluded = {_iata(a) for a in (getattr(filters, "airlines_exclude", None) or [])}
     max_duration = getattr(filters, "max_duration", None)
     price_limit = getattr(filters, "price_limit", None)

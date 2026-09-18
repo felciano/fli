@@ -603,3 +603,105 @@ class TestSearchDurations:
 
         assert len(urls) == 12 * 2
         assert elapsed < 5, f"12-duration sweep took {elapsed:.1f}s — sleeping or deadlocking?"
+
+
+def _tfs_carriers(url: str) -> bytes:
+    """Decode a request URL's ``tfs`` token to raw bytes for field assertions."""
+    import base64
+
+    token = url.split("tfs=")[1].split("&")[0]
+    return base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+
+
+class TestCarrierFiltersReachTheWire:
+    """Airline filters must be encoded into ``tfs``, not dropped.
+
+    The date sweep returns ``(date, price)`` pairs with no itinerary behind
+    them, so there is nothing for a client-side filter to work on — if the
+    carrier lists do not reach the request, the flag is silently ignored.
+    Every test here is offline: ``client.get`` replays a recorded page and
+    the request URLs are decoded back into protobuf bytes.
+    """
+
+    @pytest.fixture
+    def replayed(self, monkeypatch):
+        """Yield a ``SearchDates`` whose GETs are replayed, plus the URL log."""
+        page = _fixture_search_page()
+        urls: list[str] = []
+
+        def _fake_get(url, **kwargs):
+            urls.append(url)
+            return type("R", (), {"text": page, "raise_for_status": lambda s: None})()
+
+        search = SearchDates()
+        monkeypatch.setattr(search.client, "get", _fake_get)
+        return search, urls
+
+    @staticmethod
+    def _filters(**kwargs) -> DateSearchFilters:
+        outbound = datetime.now() + timedelta(days=30)
+        return DateSearchFilters(
+            trip_type=TripType.ONE_WAY,
+            passenger_info=PassengerInfo(adults=1, children=0, infants_in_seat=0, infants_on_lap=0),
+            flight_segments=[
+                FlightSegment(
+                    departure_airport=[[Airport.SFO, 0]],
+                    arrival_airport=[[Airport.JFK, 0]],
+                    travel_date=outbound.strftime("%Y-%m-%d"),
+                )
+            ],
+            stops=MaxStops.ANY,
+            seat_type=SeatType.ECONOMY,
+            from_date=outbound.strftime("%Y-%m-%d"),
+            to_date=(outbound + timedelta(days=2)).strftime("%Y-%m-%d"),
+            **kwargs,
+        )
+
+    def test_excluded_airline_reaches_every_request(self, replayed):
+        """``--exclude-airlines BA`` must ride in each date's ``tfs`` token."""
+        from fli.models import Airline
+
+        search, urls = replayed
+        search.search(self._filters(airlines_exclude=[Airline.BA]))
+
+        assert urls, "no requests were made"
+        for url in urls:
+            assert b"\x3a\x02BA" in _tfs_carriers(url)
+
+    def test_included_airline_reaches_every_request(self, replayed):
+        """``--airlines AA`` rides in the include list, not the exclude one."""
+        from fli.models import Airline
+
+        search, urls = replayed
+        search.search(self._filters(airlines=[Airline.AA]))
+
+        assert urls, "no requests were made"
+        for url in urls:
+            raw = _tfs_carriers(url)
+            assert b"\x32\x02AA" in raw
+            assert b"\x3a\x02AA" not in raw
+
+    def test_chunked_ranges_keep_every_carrier_filter(self):
+        """A range past ``MAX_DAYS_PER_SEARCH`` must not drop filters per chunk."""
+        from fli.models import Airline, Alliance
+
+        search = SearchDates()
+        outbound = datetime.now() + timedelta(days=30)
+        filters = self._filters(
+            airlines=[Airline.AA],
+            airlines_exclude=[Airline.BA],
+            alliances=[Alliance.ONEWORLD],
+            alliances_exclude=[Alliance.SKYTEAM],
+        )
+        filters.to_date = (outbound + timedelta(days=90)).strftime("%Y-%m-%d")
+
+        chunks = search._build_chunk_filters(
+            filters, filters.parsed_from_date, filters.parsed_to_date
+        )
+
+        assert len(chunks) > 1, "range should have split into several chunks"
+        for chunk in chunks:
+            assert chunk.airlines == [Airline.AA]
+            assert chunk.airlines_exclude == [Airline.BA]
+            assert chunk.alliances == [Alliance.ONEWORLD]
+            assert chunk.alliances_exclude == [Alliance.SKYTEAM]
