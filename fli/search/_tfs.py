@@ -35,7 +35,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from fli.models.google_flights.base import TripType
+from fli.models.google_flights.base import Alliance, TripType
 from fli.search._proto import LegSpec, encode_tfs_payload, encode_tfs_segment
 from fli.search.exceptions import SearchUnsupportedError
 
@@ -241,23 +241,31 @@ def apply_client_side_filters(flights: list[Any], filters: Any) -> list[Any]:
     :func:`build_tfs` now encodes the carrier lists, so Google has already
     filtered and back-filled.
 
-    It is suspended when an alliance include is also set. Airlines and
-    alliances share one include list on the wire, which Google reads as a
+    It is suspended whenever an alliance rides in the include list. Airlines
+    and alliances share one include list on the wire, which Google reads as a
     union, so it deliberately returns rows whose carrier is in the alliance
     but not in ``airlines``. There is no alliance-to-member table here to
     reproduce that union locally, and re-applying the airline-only test
-    would discard precisely the rows the caller asked for. The exclude
-    branch needs no such guard: it can only drop rows Google has already
-    dropped, so the local pass is always a subset.
+    would discard precisely the rows the caller asked for.
+
+    An alliance reaches that list two ways, and both must suspend the test:
+    ``--alliance ONEWORLD``, and ``--airlines ONEWORLD`` — the latter because
+    ``parse_airlines`` resolves alliance names to the matching ``Airline``
+    pseudo-members on purpose, and Google accepts either spelling. No
+    ``FlightLeg.airline`` is ever such a pseudo-member, so leaving the test on
+    matched nothing at all.
+
+    The exclude branch needs no such guard: it can only drop rows Google has
+    already dropped, so the local pass is always a subset.
     """
-    # See the note above: an alliance include makes the wire filter a union
-    # this function cannot reproduce, so it must not second-guess it.
-    alliance_include = bool(getattr(filters, "alliances", None))
-    airlines = (
-        set()
-        if alliance_include
-        else {_iata(a) for a in (getattr(filters, "airlines", None) or [])}
+    # See the note above: an alliance anywhere in the include list makes the
+    # wire filter a union this function cannot reproduce, so it must not
+    # second-guess it.
+    airline_include = getattr(filters, "airlines", None) or []
+    alliance_include = bool(getattr(filters, "alliances", None)) or any(
+        getattr(a, "name", None) in Alliance.__members__ for a in airline_include
     )
+    airlines = set() if alliance_include else {_iata(a) for a in airline_include}
     excluded = {_iata(a) for a in (getattr(filters, "airlines_exclude", None) or [])}
     max_duration = getattr(filters, "max_duration", None)
     price_limit = getattr(filters, "price_limit", None)

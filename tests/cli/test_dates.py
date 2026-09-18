@@ -625,3 +625,57 @@ def test_dates_json_error_query_echoes_carrier_filters(runner, mock_search_dates
     assert query["exclude_airlines"] == ["BA"]
     assert query["alliances"] == ["ONEWORLD"]
     assert query["exclude_alliances"] is None
+
+
+def test_error_query_echo_normalizes_carrier_codes_like_the_success_path(runner):
+    """The JSON `query` echo must not change shape depending on the outcome.
+
+    The success path echoes parsed codes (upper-cased, comma-split); the error
+    paths used to echo whatever Typer collected, so `--airlines ba,kl` came
+    back as ["BA", "KL"] on success and ["ba,kl"] on failure. A consumer
+    reading query.airlines got one code per element or one unsplit lower-case
+    string depending on whether the command happened to work.
+    """
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--class",
+            "BOGUS",
+            "--airlines",
+            "ba,kl",
+            "--exclude-airlines",
+            "dl",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    query = json.loads(result.stdout)["query"]
+    assert query["airlines"] == ["BA", "KL"]
+    assert query["exclude_airlines"] == ["DL"]
+
+
+def test_error_query_echo_falls_back_to_raw_when_the_codes_are_what_failed(runner):
+    """Normalization is best-effort: it must never mask the error being reported."""
+    result = runner.invoke(
+        app,
+        [
+            "dates",
+            "JFK",
+            "LAX",
+            "--airlines",
+            "not-an-airline",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    # The reported error is still the airline parse failure, not a crash in the echo.
+    assert "not-an-airline" in json.dumps(payload).lower()
+    assert payload["query"]["airlines"] == ["not-an-airline"]

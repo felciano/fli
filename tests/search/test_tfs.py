@@ -391,6 +391,38 @@ class TestClientSideFilters:
         kept = apply_client_side_filters(flights, spec)
         assert [leg.airline for f in kept for leg in f.legs] == [Airline.UA]
 
+    def test_alliance_name_in_the_airline_list_suspends_the_local_test(self):
+        """``--airlines ONEWORLD`` is a supported spelling, not a user error.
+
+        Google's carrier list carries airline codes and alliance names
+        interchangeably, and ``parse_airlines`` resolves alliance names to the
+        matching ``Airline`` pseudo-members on purpose (see
+        ``test_parse_airlines_alliance``). No ``FlightLeg.airline`` is ever one
+        of those pseudo-members, so the local include test matched nothing and
+        ``fli flights --airlines ONEWORLD`` reported no flights at all while
+        ``fli dates --airlines ONEWORLD`` returned the oneworld board.
+        """
+        flights = [_flight(Airline.BA), _flight(Airline.AA)]
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines=[Airline.ONEWORLD])
+        kept = apply_client_side_filters(flights, spec)
+        assert [leg.airline for f in kept for leg in f.legs] == [Airline.BA, Airline.AA]
+
+    def test_alliance_name_mixed_with_a_real_airline_suspends_it_too(self):
+        """A union of "AA or anything in oneworld" is still not locally checkable."""
+        flights = [_flight(Airline.BA), _flight(Airline.AA)]
+        spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines=[Airline.AA, Airline.ONEWORLD])
+        kept = apply_client_side_filters(flights, spec)
+        assert [leg.airline for f in kept for leg in f.legs] == [Airline.BA, Airline.AA]
+
+    def test_alliance_name_in_the_exclude_list_still_drops_named_carriers(self):
+        """Exclude stays a subset of Google's drop, so it needs no suspension."""
+        flights = [_flight(Airline.BA), _flight(Airline.AA)]
+        spec = _filters(
+            [("JFK", "LAX", OUTBOUND_DATE)], airlines_exclude=[Airline.AA, Airline.ONEWORLD]
+        )
+        kept = apply_client_side_filters(flights, spec)
+        assert [leg.airline for f in kept for leg in f.legs] == [Airline.BA]
+
     def test_airline_exclude_drops_matching_carriers(self):
         flights = [_flight(Airline.AA), _flight(Airline.DL)]
         spec = _filters([("JFK", "LAX", OUTBOUND_DATE)], airlines_exclude=[Airline.AA])

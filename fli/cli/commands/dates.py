@@ -37,6 +37,40 @@ from fli.models import (
 from fli.search import SearchClientError, SearchDates
 
 
+def _echo_airlines(raw: list[str] | None) -> list[str] | None:
+    """Normalize carrier codes for the JSON ``query`` echo, best effort.
+
+    The success path echoes parsed codes — upper-cased and comma-split — while
+    the error paths run before, or because of, parsing and echoed whatever
+    Typer collected. ``--airlines ba,kl`` therefore came back as
+    ``["BA", "KL"]`` when the command worked and ``["ba,kl"]`` when it did
+    not, so a consumer reading ``query.airlines`` got a different shape
+    depending on the outcome.
+
+    Parsing is attempted and the raw value returned on failure: when the codes
+    are themselves what failed, the echo must show what the user actually
+    typed rather than mask the error being reported.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = parse_airlines(raw)
+    except ParseError:
+        return list(raw)
+    return [airline.name.lstrip("_") for airline in parsed] if parsed else None
+
+
+def _echo_alliances(raw: list[str] | None) -> list[str] | None:
+    """Normalize alliance names for the JSON ``query`` echo — see :func:`_echo_airlines`."""
+    if not raw:
+        return None
+    try:
+        parsed = parse_alliances(raw)
+    except ParseError:
+        return list(raw)
+    return [alliance.value for alliance in parsed] if parsed else None
+
+
 def _build_selected_days(
     *,
     monday: bool,
@@ -570,10 +604,10 @@ def dates(
                             if isinstance(departure_window, tuple)
                             else departure_window
                         ),
-                        "airlines": airlines,
-                        "exclude_airlines": exclude_airlines,
-                        "alliances": alliance,
-                        "exclude_alliances": exclude_alliance,
+                        "airlines": _echo_airlines(airlines),
+                        "exclude_airlines": _echo_airlines(exclude_airlines),
+                        "alliances": _echo_alliances(alliance),
+                        "exclude_alliances": _echo_alliances(exclude_alliance),
                         "sort_by_price": sort_by_price,
                         "days": [
                             day.value
@@ -634,10 +668,10 @@ def dates(
                             if isinstance(departure_window, tuple)
                             else departure_window
                         ),
-                        "airlines": airlines,
-                        "exclude_airlines": exclude_airlines,
-                        "alliances": alliance,
-                        "exclude_alliances": exclude_alliance,
+                        "airlines": _echo_airlines(airlines),
+                        "exclude_airlines": _echo_airlines(exclude_airlines),
+                        "alliances": _echo_alliances(alliance),
+                        "exclude_alliances": _echo_alliances(exclude_alliance),
                         "sort_by_price": sort_by_price,
                         "days": [
                             day.value
