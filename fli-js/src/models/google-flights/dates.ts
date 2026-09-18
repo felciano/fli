@@ -4,7 +4,7 @@
  * 1:1 port of fli/models/google_flights/dates.py.
  */
 
-import { formatIsoDate, parseIsoDate } from "../../core/dates.ts";
+import { earliestSearchableDate, formatIsoDate, parseIsoDate, todayUtc } from "../../core/dates.ts";
 import { AIRLINE_NAMES, type Airline } from "../airline.ts";
 import {
   type Alliance,
@@ -19,7 +19,7 @@ import {
   TripType,
 } from "./base.ts";
 
-const MAX_PAST_FROM_DATE_DAYS = 6;
+export const MAX_PAST_FROM_DATE_DAYS = 6;
 
 function airlineSortKey(a: Airline): string {
   const code = a.startsWith("_") ? a.slice(1) : a;
@@ -28,11 +28,6 @@ function airlineSortKey(a: Airline): string {
 
 function serializeCode(code: string): string {
   return code.startsWith("_") ? code.slice(1) : code;
-}
-
-function todayUtc(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
 export interface DateSearchFiltersInput {
@@ -123,20 +118,28 @@ export class DateSearchFilters {
       to_date = swappedTo;
     }
 
-    // to_date must be strictly in the future.
-    const today = todayUtc();
-    if (parseIsoDate(to_date) <= today) {
-      throw new Error("To date must be in the future");
+    // to_date must not be in the past. Anchored to earliestSearchableDate()
+    // rather than plain UTC today: a range ending "today" is still live for any
+    // traveller west of the machine running the search.
+    const toParsed = parseIsoDate(to_date);
+    if (toParsed < earliestSearchableDate()) {
+      throw new Error("To date cannot be in the past");
     }
 
-    // If from_date is more than MAX_PAST_FROM_DATE_DAYS in the past, snap to today.
+    // If from_date is more than MAX_PAST_FROM_DATE_DAYS in the past, snap to
+    // today. The clamp target is plain "today", not the rejection floor:
+    // anchoring it to earliestSearchableDate() would widen
+    // MAX_PAST_FROM_DATE_DAYS by a day.
+    const today = todayUtc();
     const fromParsed = parseIsoDate(from_date);
     if (fromParsed < today) {
       const deltaDays = Math.round(
         (today.getTime() - fromParsed.getTime()) / (1000 * 60 * 60 * 24),
       );
       if (deltaDays > MAX_PAST_FROM_DATE_DAYS) {
-        from_date = formatIsoDate(today);
+        // to_date may itself sit at the rejection floor (yesterday UTC), so cap
+        // the clamp at to_date to keep the range ordered.
+        from_date = formatIsoDate(today <= toParsed ? today : toParsed);
       }
     }
 

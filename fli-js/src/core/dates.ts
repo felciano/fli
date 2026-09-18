@@ -41,3 +41,34 @@ export function formatIsoDate(d: Date): string {
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+/** Today's date at UTC midnight. */
+export function todayUtc(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+/**
+ * The earliest date that is still "today" somewhere on Earth: UTC midnight
+ * minus one day.
+ *
+ * Do not "tidy" this back to plain UTC midnight. Travel dates are supplied in
+ * the *origin airport's* local timezone, but this package carries no
+ * per-airport timezone data, so validation can only reference the clock of the
+ * machine it runs on. Real UTC offsets span UTC-12 to UTC+14, so any
+ * traveller's local date is within one day of the UTC date: at 17:00 in San
+ * Francisco the UTC date has already rolled over, and comparing against plain
+ * UTC midnight refuses a same-day evening departure that has not left.
+ * Anchoring to `utc_today - 1` therefore never rejects a date that is still
+ * today-or-future for the actual traveller.
+ *
+ * The accepted cost is that one day of genuinely past dates reaches Google,
+ * which answers them with a confusing failure rather than an empty result.
+ * Ported from `fli/models/google_flights/base.py::earliest_searchable_date`;
+ * see KNOWN_ISSUES.md issue 1 for the Python transport's symptom (the JS
+ * transports differ, so the surfaced error may not match verbatim).
+ */
+export function earliestSearchableDate(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+}

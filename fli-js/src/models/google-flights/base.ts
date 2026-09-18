@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import { parseIsoDate } from "../../core/dates.ts";
+import { earliestSearchableDate, parseIsoDate } from "../../core/dates.ts";
 import type { Airline } from "../airline.ts";
 import type { Airport } from "../airport.ts";
 
@@ -271,11 +271,6 @@ export interface FlightSegmentInput {
   selected_flight?: FlightResult | null;
 }
 
-function todayUtc(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-}
-
 export class FlightSegment {
   readonly departure_airport: AirportEntry[][];
   readonly arrival_airport: AirportEntry[][];
@@ -288,9 +283,10 @@ export class FlightSegment {
       throw new Error("Both departure and arrival airports must be specified");
     }
 
-    // travel_date must be a valid ISO date and not in the past.
+    // travel_date must be a valid ISO date and not in the past. The floor is
+    // earliestSearchableDate(), not UTC midnight: see its docstring.
     const travelDate = parseIsoDate(input.travel_date);
-    if (travelDate < todayUtc()) {
+    if (travelDate < earliestSearchableDate()) {
       throw new Error("Travel date cannot be in the past");
     }
 
