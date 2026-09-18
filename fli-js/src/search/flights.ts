@@ -5,8 +5,8 @@
  */
 
 import type { GoogleFlightsUrlOptions } from "../core/links.ts";
-import type { BookingOption, FlightResult } from "../models/google-flights/base.ts";
-import { TripType } from "../models/google-flights/base.ts";
+import type { BookingOption, FlightResult, PassengerInfo } from "../models/google-flights/base.ts";
+import { SeatType, TripType } from "../models/google-flights/base.ts";
 import { FlightSearchFilters } from "../models/google-flights/flights.ts";
 import { type Client, getClient } from "./client.ts";
 import { parallelMap } from "./concurrency.ts";
@@ -31,8 +31,41 @@ export interface BookingOptions {
   sessionId?: string | null;
 }
 
-/** Locale knobs for {@link SearchFlights.buildFlightBookingUrl} (alias of the core options). */
-export type BookingUrlOptions = GoogleFlightsUrlOptions;
+/** Locale knobs plus cabin class for {@link SearchFlights.buildFlightBookingUrl}. */
+export interface BookingUrlOptions extends GoogleFlightsUrlOptions {
+  /** Cabin class encoded into the `tfs` token (field 9). Defaults to economy. */
+  seatType?: SeatType;
+  /**
+   * Party composition encoded into the `tfs` token (repeated field 8).
+   * Defaults to a single adult; pass the search's own `passenger_info` so
+   * the link prices the party that was actually searched.
+   */
+  passengerInfo?: PassengerInfo;
+}
+
+/** Passenger kinds, in the order Google's repeated field 8 expects them. */
+const PASSENGER_FIELDS = [
+  ["adults", 1],
+  ["children", 2],
+  ["infants_in_seat", 3],
+  ["infants_on_lap", 4],
+] as const;
+
+/**
+ * Expand a {@link PassengerInfo} into Google's repeated field 8 codes.
+ *
+ * Google encodes party composition as one entry per traveller carrying that
+ * traveller's kind, not a count per kind, so two adults and a child are
+ * `[1, 1, 2]`. 1:1 port of `passenger_codes` in fli/search/_tfs.py.
+ */
+export function passengerCodes(info: PassengerInfo | undefined): number[] {
+  if (!info) return [];
+  const codes: number[] = [];
+  for (const [field, code] of PASSENGER_FIELDS) {
+    for (let i = 0; i < (info[field] ?? 0); i++) codes.push(code);
+  }
+  return codes;
+}
 
 export class SearchFlights {
   static readonly BASE_URL =
@@ -251,7 +284,13 @@ export class SearchFlights {
           flightNumber: leg.flight_number,
         })),
       );
-      const tfs = buildTfsToken(segments, { isOneWay });
+      const tfs = buildTfsToken(segments, {
+        isOneWay,
+        seat: options.seatType ?? SeatType.ECONOMY,
+        // An all-zero PassengerInfo would otherwise emit an empty party,
+        // which Google rejects; one adult matches the historical token.
+        passengers: passengerCodes(options.passengerInfo),
+      });
       url = `https://www.google.com/travel/flights/booking?tfs=${tfs}`;
     } catch {
       url = "https://www.google.com/travel/flights";

@@ -245,8 +245,10 @@ class LayoverRestrictions(BaseModel):
 class Amenities(BaseModel):
     """Per-leg amenities reported by Google Flights.
 
-    All fields are tri-state (`True`, `False`, or `None` when Google did not
-    publish that signal for the leg).
+    Boolean fields are tri-state (`True`, `False`, or `None` when Google did
+    not publish that signal for the leg). ``legroom_rating`` is Google's
+    seat-quality code from ``leg[13]``, or `None` when unavailable; it is not
+    an ordered numeric score and it is not the Wi-Fi tier.
     """
 
     wifi: bool | None = None

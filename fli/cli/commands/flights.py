@@ -246,7 +246,12 @@ def _search_flights_core(
         # Build per-flight booking deep-links (tfs; never raises).
         booking_urls = [
             search_client.build_flight_booking_url(
-                result, currency=currency, language=language, country=country
+                result,
+                currency=currency,
+                language=language,
+                country=country,
+                seat_type=seat_type,
+                passenger_info=filters.passenger_info,
             )
             for result in results
         ]

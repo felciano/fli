@@ -9,7 +9,11 @@ import { describe, expect, test } from "bun:test";
 import { Buffer } from "node:buffer";
 import { Airline } from "../../src/models/airline.ts";
 import { Airport } from "../../src/models/airport.ts";
-import type { FlightLeg, FlightResult } from "../../src/models/google-flights/base.ts";
+import {
+  type FlightLeg,
+  type FlightResult,
+  SeatType,
+} from "../../src/models/google-flights/base.ts";
 import { SearchFlights } from "../../src/search/flights.ts";
 
 /** Build a leg with a LOCAL departure datetime (matches the decoder). */
@@ -194,5 +198,46 @@ describe("buildFlightBookingUrl", () => {
 
   test("returns a string", () => {
     expect(typeof search.buildFlightBookingUrl(oneWay())).toBe("string");
+  });
+
+  test("seatType defaults to economy (field 9 = 1)", () => {
+    const raw = tfsBytes(search.buildFlightBookingUrl(oneWay()));
+    expect(Buffer.from(raw).includes(Buffer.from([0x48, 0x01]))).toBe(true);
+    expect(Buffer.from(raw).includes(Buffer.from([0x48, 0x03]))).toBe(false);
+  });
+
+  test("seatType BUSINESS encodes field 9 as 3", () => {
+    const economy = search.buildFlightBookingUrl(oneWay());
+    const business = search.buildFlightBookingUrl(oneWay(), { seatType: SeatType.BUSINESS });
+    expect(economy).not.toBe(business);
+    const raw = tfsBytes(business);
+    expect(Buffer.from(raw).includes(Buffer.from([0x48, 0x03]))).toBe(true);
+  });
+});
+
+describe("buildFlightBookingUrl passengers", () => {
+  const search = new SearchFlights();
+
+  test("defaults to one adult", () => {
+    const raw = Buffer.from(tfsBytes(search.buildFlightBookingUrl(oneWay())));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x48, 0x01]))).toBe(true);
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40]))).toBe(false);
+  });
+
+  test("a family reaches the token as 1,1,2,4", () => {
+    const url = search.buildFlightBookingUrl(oneWay(), {
+      passengerInfo: { adults: 2, children: 1, infants_in_seat: 0, infants_on_lap: 1 },
+    });
+    expect(url).not.toBe(search.buildFlightBookingUrl(oneWay()));
+    const raw = Buffer.from(tfsBytes(url));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x40, 0x01, 0x40, 0x02, 0x40, 0x04]))).toBe(true);
+  });
+
+  test("an all-zero PassengerInfo falls back to one adult", () => {
+    const url = search.buildFlightBookingUrl(oneWay(), {
+      passengerInfo: { adults: 0, children: 0, infants_in_seat: 0, infants_on_lap: 0 },
+    });
+    const raw = Buffer.from(tfsBytes(url));
+    expect(raw.includes(Buffer.from([0x40, 0x01, 0x48, 0x01]))).toBe(true);
   });
 });

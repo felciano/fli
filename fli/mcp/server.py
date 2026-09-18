@@ -725,6 +725,8 @@ def _execute_flight_search(params: FlightSearchParams) -> dict[str, Any]:
                     currency=params.currency,
                     language=params.language,
                     country=params.country,
+                    seat_type=filters.seat_type,
+                    passenger_info=filters.passenger_info,
                 ),
             )
             for f in flights
@@ -813,6 +815,8 @@ def _execute_booking_options(
             currency=params.currency,
             language=params.language,
             country=params.country,
+            seat_type=filters.seat_type,
+            passenger_info=filters.passenger_info,
         )
         serialized = [_serialize_booking_option(o) for o in options]
         result = {

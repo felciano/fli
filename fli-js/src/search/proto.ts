@@ -347,6 +347,19 @@ export interface LegSpec {
 export interface BuildTfsTokenOptions {
   /** `true` for one-way (incl. multi-city); `false` for round-trip. */
   isOneWay?: boolean;
+  /**
+   * Cabin class encoded in field 9.
+   * `1` = economy, `2` = premium economy, `3` = business, `4` = first.
+   * Defaults to economy so existing callers keep producing the captured tokens.
+   */
+  seat?: number;
+  /**
+   * Passenger kind codes, one entry per traveller, encoded as repeated
+   * field 8 (`1` = adult, `2` = child, `3` = infant in seat, `4` = infant
+   * on lap). Defaults to a single adult so existing callers keep producing
+   * the captured tokens.
+   */
+  passengers?: number[];
 }
 
 /**
@@ -363,6 +376,8 @@ export interface BuildTfsTokenOptions {
  */
 export function buildTfsToken(segments: LegSpec[][], options: BuildTfsTokenOptions = {}): string {
   const isOneWay = options.isOneWay ?? true;
+  const seat = options.seat ?? 1;
+  const passengers = options.passengers?.length ? options.passengers : [1];
   if (segments.length === 0) throw new Error("segments must be non-empty");
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
@@ -401,8 +416,8 @@ export function buildTfsToken(segments: LegSpec[][], options: BuildTfsTokenOptio
     varintField(1, 28),
     varintField(2, 2),
     segmentProtos,
-    varintField(8, 1),
-    varintField(9, 1),
+    concatBytes(...passengers.map((kind) => varintField(8, kind))),
+    varintField(9, seat), // 1=economy 2=premium 3=business 4=first
     varintField(14, 1),
     lengthDelim(16, concatBytes(tag(1, 0), varintBig(MAX_U64))),
     varintField(19, f19),
