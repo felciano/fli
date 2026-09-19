@@ -13,10 +13,16 @@ The Service returns JSONP-flavoured responses of the form::
 the legacy parsers in this package could get away with `lstrip(")]}'")`.
 `GetBookingResults` emits two chunks, so we need a proper multi-chunk reader.
 
-Important quirk: the length headers count UTF-8 **bytes**, not Python string
-characters. When the response contains any non-ASCII characters (which it
-sometimes does — airport names, airline names) the offsets diverge, so the
-reader must operate over the byte representation of the body.
+Important quirk: the length headers count **characters**, not UTF-8 bytes —
+Google emits them from JavaScript's ``String.length``. When the response
+contains non-ASCII characters (airport and airline names routinely do) the
+two diverge, so the reader must walk the decoded string, not the bytes.
+
+This was invisible until a real multi-city response was captured: every other
+endpoint we had fixtures for returns a single frame with no length header at
+all, so nothing exercised the arithmetic. Walking the bytes desyncs by one
+per extra UTF-8 byte, the next header lands mid-number, and the stream
+truncates after the first frame — nine frames decode as one, or as none.
 
 This module centralises that reader and exposes :func:`iter_wrb_chunks` which
 yields the decoded inner JSON of each ``wrb.fr`` chunk.
@@ -31,7 +37,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_PREFIX = b")]}'"
+_PREFIX = ")]}'"
 
 
 def iter_wrb_chunks(body: str | bytes) -> Iterator[Any]:
@@ -41,37 +47,41 @@ def iter_wrb_chunks(body: str | bytes) -> Iterator[Any]:
     ``GetShoppingResults`` / ``GetCalendarGraph`` shape) — those are parsed
     by falling back to a single JSON load over the trimmed body.
     """
-    if isinstance(body, str):
-        raw = body.encode("utf-8")
+    if isinstance(body, bytes):
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning("wrb.fr body is not valid UTF-8", exc_info=True)
+            return
     else:
-        raw = body
+        text = body
 
-    raw = raw.lstrip()
-    if raw.startswith(_PREFIX):
-        raw = raw[len(_PREFIX) :]
-    raw = raw.lstrip()
+    text = text.lstrip()
+    if text.startswith(_PREFIX):
+        text = text[len(_PREFIX) :]
+    text = text.lstrip()
 
-    if not raw:
+    if not text:
         return
 
     # Fast path: no length headers (legacy single-chunk responses).
-    if not (b"0" <= raw[:1] <= b"9"):
+    if not text[:1].isdigit():
         try:
-            outer = json.loads(raw.decode("utf-8"))
-        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            outer = json.loads(text)
+        except (ValueError, json.JSONDecodeError):
             logger.warning("Failed to decode single-chunk wrb.fr body as JSON", exc_info=True)
             return
         yield from _chunks_from_outer(outer)
         return
 
     cursor = 0
-    while cursor < len(raw):
+    while cursor < len(text):
         # Read the decimal length prefix terminated by \n.
-        end = raw.find(b"\n", cursor)
+        end = text.find("\n", cursor)
         if end == -1:
             break
         try:
-            length = int(raw[cursor:end])
+            length = int(text[cursor:end])
         except ValueError:
             logger.warning(
                 "Malformed length header at offset %d; truncating chunk stream",
@@ -83,12 +93,12 @@ def iter_wrb_chunks(body: str | bytes) -> Iterator[Any]:
         # We've already consumed the leading newline (it terminated the header),
         # so we read `length - 1` bytes which gives JSON + trailing \n.
         cursor = end + 1
-        chunk_bytes = max(length - 1, 0)
-        payload = raw[cursor : cursor + chunk_bytes]
-        cursor += chunk_bytes
+        chunk_chars = max(length - 1, 0)
+        payload = text[cursor : cursor + chunk_chars]
+        cursor += chunk_chars
         try:
-            outer = json.loads(payload.strip().decode("utf-8"))
-        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            outer = json.loads(payload.strip())
+        except (ValueError, json.JSONDecodeError):
             logger.warning("Discarding malformed wrb.fr chunk", exc_info=True)
             continue
         yield from _chunks_from_outer(outer)

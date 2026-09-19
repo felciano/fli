@@ -1,6 +1,7 @@
 """Tests for the wire-format parser shared by all FlightsFrontendService responses."""
 
 import json
+from pathlib import Path
 
 from fli.search._wire import iter_wrb_chunks, parse_first_wrb_payload
 
@@ -141,3 +142,27 @@ class TestParseFirstWrbPayloadEdgeCases:
         outer = [["wrb.fr", None, bad_inner], ["wrb.fr", None, good_inner]]
         body = ")]}'\n\n" + json.dumps(outer)
         assert parse_first_wrb_payload(body) == [42]
+
+
+class TestLengthPrefixedMultiFrame:
+    """Multi-city responses arrive as many length-prefixed frames.
+
+    Every other captured fixture is a single frame with no length header, so
+    the header semantics went untested until a real multi-city body was
+    captured. The headers count **characters**, not UTF-8 bytes: walking them
+    over the byte representation desyncs by one byte per non-ASCII character
+    and the stream truncates at the first frame.
+    """
+
+    FIXTURE = Path(__file__).parent / "fixtures" / "flight_search_multi_city.bin"
+
+    def test_every_frame_is_yielded(self):
+        body = self.FIXTURE.read_bytes()
+        chunks = list(iter_wrb_chunks(body))
+        # The capture carries nine `wrb.fr` frames.
+        assert body.count(b"wrb.fr") == 9
+        assert len(chunks) == 9, f"expected 9 chunks, got {len(chunks)}"
+
+    def test_bytes_and_str_input_agree(self):
+        body = self.FIXTURE.read_bytes()
+        assert len(list(iter_wrb_chunks(body))) == len(list(iter_wrb_chunks(body.decode("utf-8"))))

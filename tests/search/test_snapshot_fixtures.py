@@ -50,6 +50,7 @@ from pathlib import Path
 import pytest
 
 from fli.search._decoders import parse_flight_row
+from fli.search._wire import iter_wrb_chunks
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
@@ -321,3 +322,52 @@ class TestPremiumRoundTripPriceless:
             assert f.duration > 0
             assert f.legs[0].departure_airport.name == "LAX"
             assert f.legs[-1].arrival_airport.name == "LHR"
+
+
+class TestMultiFrameSnapshot:
+    """A multi-frame, length-prefixed capture replayed through the real reader.
+
+    ``flight_search_multi_city.bin`` is the only fixture here that arrives as
+    a length-prefixed stream — nine ``wrb.fr`` frames rather than the single
+    header-less frame every other endpoint returns. It is therefore the only
+    one that exercises :func:`iter_wrb_chunks`' frame arithmetic, which is why
+    a unit error there (counting UTF-8 bytes where Google counts characters)
+    survived until this body was captured: it truncated the stream after the
+    first header, and nine frames decoded as none.
+
+    The rows themselves are ordinary. They sit at the usual ``[2]``/``[3]``
+    positions, so ``parse_flight_row`` reads them unchanged — the defect was
+    purely in framing.
+    """
+
+    def _replay_framed(self, name: str) -> list:
+        body = (FIXTURE_DIR / name).read_bytes()
+        flights = []
+        for chunk in iter_wrb_chunks(body):
+            rows = [item for i in (2, 3) if isinstance(chunk[i], list) for item in chunk[i][0]]
+            for row in rows:
+                try:
+                    flights.append(parse_flight_row(row))
+                except (AttributeError, KeyError, ValueError, TypeError):
+                    continue
+        return flights
+
+    def test_every_frame_is_read(self):
+        body = (FIXTURE_DIR / "flight_search_multi_city.bin").read_bytes()
+        assert body.count(b"wrb.fr") == 9
+        assert len(list(iter_wrb_chunks(body))) == 9
+
+    def test_rows_decode_across_all_frames(self):
+        flights = self._replay_framed("flight_search_multi_city.bin")
+        # Truncating after the first frame yielded zero; the whole stream
+        # carries substantially more than any single frame could.
+        assert len(flights) > 50
+        assert all(f.legs for f in flights)
+
+    def test_prices_and_carriers_are_populated(self):
+        flights = self._replay_framed("flight_search_multi_city.bin")
+        priced = [f for f in flights if f.price]
+        assert priced, "expected at least one priced itinerary"
+        assert min(f.price for f in priced) > 0
+        carriers = {leg.airline for f in flights for leg in f.legs}
+        assert len(carriers) > 1, "expected more than one carrier across the board"
