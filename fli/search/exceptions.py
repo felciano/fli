@@ -41,14 +41,49 @@ class SearchRejectedError(SearchClientError):
     flights found", which is indistinguishable from a route with no service.
     """
 
+    #: gRPC canonical status codes, which Google reuses here. Observed: 3 for
+    #: a payload it cannot decode, 13 for a request it declines to serve.
+    STATUS_NAMES = {
+        1: "CANCELLED",
+        2: "UNKNOWN",
+        3: "INVALID_ARGUMENT",
+        4: "DEADLINE_EXCEEDED",
+        5: "NOT_FOUND",
+        6: "ALREADY_EXISTS",
+        7: "PERMISSION_DENIED",
+        8: "RESOURCE_EXHAUSTED",
+        9: "FAILED_PRECONDITION",
+        10: "ABORTED",
+        11: "OUT_OF_RANGE",
+        12: "UNIMPLEMENTED",
+        13: "INTERNAL",
+        14: "UNAVAILABLE",
+        15: "DATA_LOSS",
+        16: "UNAUTHENTICATED",
+    }
+
     def __init__(self, code: int | None = None):
         """Record the numeric error code alongside the user-facing message."""
         self.code = code
-        suffix = f" (error {code})" if code is not None else ""
+        name = self.STATUS_NAMES.get(code) if code is not None else None
+        suffix = f" (error {code}{f' {name}' if name else ''})" if code is not None else ""
+        # The two observed codes mean different things, so do not blame the
+        # gate for both: 13 is the signature of a request Google declines to
+        # serve (the bgr gate); 3 is a payload it could not decode, which is
+        # this client's bug, not Google's policy.
+        if code == 3:
+            cause = (
+                "It could not decode the request payload, which usually means a "
+                "malformed or empty f.req rather than a blocked endpoint."
+            )
+        else:
+            cause = (
+                "Its API now requires a browser-signed x-goog-batchexecute-bgr "
+                "header, which this client cannot produce. "
+                "See github.com/punitarani/fli#223."
+            )
         super().__init__(
-            f"Google Flights declined the request{suffix} and returned no data. "
-            "Its API now requires a browser-signed x-goog-batchexecute-bgr header, "
-            "which this client cannot produce. See github.com/punitarani/fli#223."
+            f"Google Flights declined the request{suffix} and returned no data. {cause}"
         )
 
 

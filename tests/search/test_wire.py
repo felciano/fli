@@ -3,7 +3,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from fli.search._wire import iter_wrb_chunks, parse_first_wrb_payload
+from fli.search.exceptions import SearchRejectedError
 
 
 def _single_chunk(payload):
@@ -211,3 +214,57 @@ class TestFramingIsGrammarDriven:
         tags = ["Z\u00fcrich", "S\u00e3o Paulo", "plain"]
         body = self._framed([self._payload(t) for t in tags], lambda c: len(c) + 2)
         assert [c[0] for c in iter_wrb_chunks(body)] == tags
+
+
+class TestRejectionEnvelope:
+    """A payload-less ``wrb.fr`` row means Google declined, not "no flights".
+
+    Raising is right when that is all the response contains. It is wrong when
+    other chunks carried data: the exception escapes mid-generator, so a
+    caller doing ``list(iter_wrb_chunks(...))`` loses every chunk decoded
+    before it. That only became reachable once multi-frame responses decoded
+    at all — multi-city returns nine chunks, Explore three.
+    """
+
+    @staticmethod
+    def _framed(rows: list) -> str:
+        out = [")]}'\n\n"]
+        for row in rows:
+            chunk = json.dumps([row])
+            out.append(f"{len(chunk) + 2}\n{chunk}\n")
+        return "".join(out)
+
+    def _data(self, tag: str) -> list:
+        return ["wrb.fr", None, json.dumps([tag])]
+
+    def _error(self, code: int = 13) -> list:
+        return ["wrb.fr", None, None, None, None, [code]]
+
+    def test_rejection_only_raises(self):
+        with pytest.raises(SearchRejectedError) as exc:
+            list(iter_wrb_chunks(self._framed([self._error(13)])))
+        assert exc.value.code == 13
+
+    def test_data_survives_a_later_rejection(self):
+        body = self._framed([self._data("a"), self._data("b"), self._error(13), self._data("c")])
+        chunks = list(iter_wrb_chunks(body))
+        assert [c[0] for c in chunks] == ["a", "b", "c"]
+
+    def test_data_survives_a_leading_rejection(self):
+        body = self._framed([self._error(13), self._data("a")])
+        assert [c[0] for c in iter_wrb_chunks(body)] == ["a"]
+
+    def test_status_name_is_named_in_the_message(self):
+        with pytest.raises(SearchRejectedError) as exc:
+            list(iter_wrb_chunks(self._framed([self._error(13)])))
+        assert "INTERNAL" in str(exc.value)
+
+    def test_invalid_argument_is_named(self):
+        with pytest.raises(SearchRejectedError) as exc:
+            list(iter_wrb_chunks(self._framed([self._error(3)])))
+        assert "INVALID_ARGUMENT" in str(exc.value)
+
+    def test_unmapped_code_still_raises_with_its_number(self):
+        with pytest.raises(SearchRejectedError) as exc:
+            list(iter_wrb_chunks(self._framed([self._error(99)])))
+        assert "99" in str(exc.value)

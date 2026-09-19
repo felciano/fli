@@ -40,6 +40,8 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
+from fli.search.exceptions import SearchRejectedError
+
 logger = logging.getLogger(__name__)
 
 _PREFIX = ")]}'"
@@ -74,6 +76,8 @@ def iter_wrb_chunks(body: str | bytes) -> Iterator[Any]:
     text = text.lstrip()
 
     decoder = json.JSONDecoder()
+    rejections: list[int | None] = []
+    yielded = 0
     cursor = 0
     while cursor < len(text):
         # Skip the length header and any surrounding whitespace. A
@@ -91,11 +95,25 @@ def iter_wrb_chunks(body: str | bytes) -> Iterator[Any]:
                 break
             cursor = boundary.end()
             continue
-        yield from _chunks_from_outer(outer)
+        for chunk in _chunks_from_outer(outer, rejections):
+            yielded += 1
+            yield chunk
+
+    # A rejection row means Google declined, which must not be reported as an
+    # empty route. But it must not discard chunks that *did* carry data
+    # either: raising from inside the generator aborts the caller's
+    # iteration, so a single rejection among nine multi-city chunks would
+    # lose all of them. Raise only when nothing else came back.
+    if rejections and not yielded:
+        raise SearchRejectedError(rejections[0])
 
 
-def _chunks_from_outer(outer: Any) -> Iterator[Any]:
-    """Walk a top-level chunk list and yield decoded inner-JSON payloads."""
+def _chunks_from_outer(outer: Any, rejections: list[int | None]) -> Iterator[Any]:
+    """Walk a top-level chunk list and yield decoded inner-JSON payloads.
+
+    Rejection rows are recorded in *rejections* rather than raised here, so
+    the caller can decide once it knows whether anything else decoded.
+    """
     if not isinstance(outer, list):
         return
     for row in outer:
@@ -110,9 +128,7 @@ def _chunks_from_outer(outer: Any) -> Iterator[Any]:
             # don't report a hard block as "no flights on this route".
             code = row[5][0] if len(row) > 5 and isinstance(row[5], list) and row[5] else None
             if isinstance(code, int):
-                from fli.search.exceptions import SearchRejectedError
-
-                raise SearchRejectedError(code)
+                rejections.append(code)
             continue
         try:
             yield json.loads(inner)
