@@ -96,6 +96,13 @@ extra:
       find what they're searching for. With your consent, you're helping us to
       make our documentation better.
 
+# Architecture decision records under docs/decisions/ are contributor-facing and
+# are read in the repository, not on the published site, which carries the
+# user-facing library documentation. Excluding them keeps the built site
+# unchanged and keeps `mkdocs build` free of "not included in the nav" notices.
+exclude_docs: |
+  decisions/
+
 nav:
   - Home: index.md
   - Python:
