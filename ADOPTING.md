@@ -143,12 +143,30 @@ fixing there too.
   after a bad chunk. That is correct under either convention — strictly better
   than pinning today's one, which is the assumption that caused the bug. Only
   the framing half is taken; the error envelope stays as #230 left it.
-- **#226 (Explore) — now evaluated, and the guess above was wrong.** This file
-  previously said it "may be behind the same `bgr` gate that killed
-  `GetShoppingResults`". It is not. Captured a real `GetExploreDestinations`
-  call from a browser and replayed it over plain HTTP with **no**
-  `x-goog-batchexecute-bgr` header: HTTP 200, 48 KB, real data. The browser
-  does send the header; Google does not require it on this endpoint.
+- **#226 (Explore) — evaluated. It *is* behind the `bgr` gate, and this entry
+  said otherwise for several hours.** The original guess in this file — that it
+  "may be behind the same `bgr` gate that killed `GetShoppingResults`" — was
+  right.
+
+  The retraction matters more than the conclusion, because the method that
+  produced the wrong answer looks convincing. Capturing a real
+  `GetExploreDestinations` call from the browser and replaying it over plain
+  HTTP with the `bgr` header removed returned HTTP 200 and real data, which
+  reads as "not gated". It is not: replaying a request the browser has just
+  made appears to hit a short-lived cache keyed on the request, so the replay
+  succeeds on the strength of the browser's own signed call moments earlier.
+
+  The controlled test is to capture a *fresh* request and replay it twice
+  within the same second, varying only the header. Reproduced twice:
+
+      replay WITHOUT bgr                        REJECTED error 13
+      replay WITH bgr (copied from the browser) HTTP 200, chunks decoded
+
+  Confirmed from the other direction too: `SearchExplore` as #226 builds it —
+  the minimal shape its own docstring says is sufficient — is rejected with
+  error 13 live, as are all five rungs of the escalation ladder that docstring
+  proposes, including the exact query parameters captured from a working page
+  load.
 
   It was nevertheless undecodable here, for the unrelated reason fixed in this
   branch. Explore responses are length-prefixed and multi-frame — #226's own
@@ -161,9 +179,39 @@ fixing there too.
       grammar-driven reader 3 chunks
 
   So #226 is worth real review rather than being parked, and it needs the
-  framing fix to work at all. That also removes an argument used elsewhere in
-  this fork's notes: Explore is *not* a second consumer for a browser-backed
-  transport, because it does not need one.
+  framing fix to work at all. It is also a genuine second consumer for a
+  browser-backed transport: being `bgr`-gated, it cannot be served any other
+  way, exactly like multi-city.
+
+  **Reviewed, on the data path.** The decoder is sound. Its classifiers were
+  run against two real captures — the PR's own
+  `explore_lon_southern_europe.bin` and a `London → anywhere` response
+  captured here — and both decode cleanly:
+
+      PR's fixture      3 chunks   58 destinations   46 prices  (Malta, …)
+      anywhere capture  3 chunks   64 destinations   48 prices  (Madrid, …)
+
+  The approach is right: classify each chunk by shape (destinations at
+  `chunk[3][0]`, fares at `chunk[4][0]`), accumulate across chunks, then
+  left-join fares onto destinations by knowledge-graph mid. Chunk order is not
+  assumed.
+
+  **But its fixture cannot catch its own failure mode.** The PR's capture
+  carries no length headers — three `wrb.fr` rows inside one JSON blob — so it
+  decodes on `main` as well as here. A live "anywhere" query returns the
+  *length-prefixed streaming* shape instead, which yields **0 chunks** on
+  `main`. Their CI would be green while the feature's headline use case
+  returns nothing. Any adoption should add a streaming-shape fixture, not just
+  carry theirs over.
+
+  One smaller note: `region_name` is extracted from `chunk[2][0]`, which is
+  absent on an unscoped "anywhere" query (it is `'Southern Europe'` in their
+  regional capture, `None` in ours). Harmless, but the metadata is
+  region-shaped and "anywhere" is the advertised case.
+
+  Not yet reviewed: the MCP tool (+401 in `fli/mcp/server.py`), the models
+  (+336), and the ~780 lines of tests. This assessment covers viability of the
+  data path only.
 
 ## Release notes
 
