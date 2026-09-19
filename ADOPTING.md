@@ -143,9 +143,27 @@ fixing there too.
   after a bad chunk. That is correct under either convention — strictly better
   than pinning today's one, which is the assumption that caused the bug. Only
   the framing half is taken; the error envelope stays as #230 left it.
-- **#226 (Explore)** — not evaluated. It is built on `GetExploreDestinations`,
-  another batchexecute RPC, so it may be behind the same `bgr` gate that killed
-  `GetShoppingResults`. Worth confirming before spending review time.
+- **#226 (Explore) — now evaluated, and the guess above was wrong.** This file
+  previously said it "may be behind the same `bgr` gate that killed
+  `GetShoppingResults`". It is not. Captured a real `GetExploreDestinations`
+  call from a browser and replayed it over plain HTTP with **no**
+  `x-goog-batchexecute-bgr` header: HTTP 200, 48 KB, real data. The browser
+  does send the header; Google does not require it on this endpoint.
+
+  It was nevertheless undecodable here, for the unrelated reason fixed in this
+  branch. Explore responses are length-prefixed and multi-frame — #226's own
+  notes say "24 observed for Oceania" — and 13 non-ASCII characters in a 48 KB
+  body is enough to desynchronise the old byte-counting reader. Against the
+  same captured body:
+
+      reader on `main`      0 chunks  (Unterminated string, then
+                                       Malformed length header at offset 34649)
+      grammar-driven reader 3 chunks
+
+  So #226 is worth real review rather than being parked, and it needs the
+  framing fix to work at all. That also removes an argument used elsewhere in
+  this fork's notes: Explore is *not* a second consumer for a browser-backed
+  transport, because it does not need one.
 
 ## Release notes
 
