@@ -209,6 +209,7 @@ def multi_city_url(
     currency: str | None = None,
     language: str | None = None,
     country: str | None = None,
+    carriers: Sequence[str] = (),
 ) -> str:
     """Build a Google Flights URL for a multi-city itinerary.
 
@@ -225,6 +226,10 @@ def multi_city_url(
         currency: ISO 4217 code appended as ``curr=``.
         language: BCP-47 code appended as ``hl=``.
         country: ISO 3166-1 alpha-2 code appended as ``gl=``.
+        carriers: Airline IATA codes or alliance names to restrict every leg
+            to, encoded into each segment's carrier include list exactly as
+            :func:`build_tfs` does. Without it a filtered search would
+            research one set of flights and then link a board showing another.
 
     Returns:
         A ``https://www.google.com/travel/flights?tfs=…`` URL.
@@ -236,7 +241,10 @@ def multi_city_url(
     if len(legs) < 2:
         raise ValueError("A multi-city itinerary needs at least two legs")
 
-    segments = b"".join(encode_tfs_segment(origin, dest, date) for origin, dest, date in legs)
+    segments = b"".join(
+        encode_tfs_segment(origin, dest, date, carriers=list(carriers))
+        for origin, dest, date in legs
+    )
     # Field 19 carries the trip type: 1 round-trip, 2 one-way, 3 multi-city.
     # encode_tfs_payload only spells the first two, so the envelope is built
     # from the same primitives it uses rather than duplicating its logic

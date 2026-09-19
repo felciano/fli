@@ -274,6 +274,7 @@ def _research_legs(
 
     url = multi_city_url(
         [(o.name.lstrip("_"), d.name.lstrip("_"), date) for o, d, date in parsed_legs],
+        carriers=[a.name.lstrip("_") for a in (filters.airlines or [])],
     )
     console.print("\n[bold]Multi-city fare[/bold]")
     if all(p is not None for p in per_leg_cheapest) and per_leg_cheapest:
