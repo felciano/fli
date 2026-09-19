@@ -19,6 +19,14 @@ from .base import (
     TripType,
 )
 from .dates import DateSearchFilters
+from .explore import (
+    ExploreDestination,
+    ExplorePlace,
+    ExplorePlaceType,
+    ExploreRegion,
+    ExploreResult,
+    ExploreSearchFilters,
+)
 from .flights import FlightSearchFilters
 
 __all__ = [
@@ -44,4 +52,10 @@ __all__ = [
     "SortBy",
     "TimeRestrictions",
     "TripType",
+    "ExploreDestination",
+    "ExplorePlace",
+    "ExplorePlaceType",
+    "ExploreRegion",
+    "ExploreResult",
+    "ExploreSearchFilters",
 ]

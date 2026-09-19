@@ -5,6 +5,7 @@ from .exceptions import (
     SearchHTTPError,
     SearchTimeoutError,
 )
+from .explore import SearchExplore
 from .flights import SearchFlights
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "SearchTimeoutError",
     "SearchConnectionError",
     "SearchHTTPError",
+    "SearchExplore",
 ]
