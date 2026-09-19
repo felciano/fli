@@ -165,6 +165,36 @@ fixing there too.
   this fork's notes: Explore is *not* a second consumer for a browser-backed
   transport, because it does not need one.
 
+  **Reviewed, on the data path.** The decoder is sound. Its classifiers were
+  run against two real captures — the PR's own
+  `explore_lon_southern_europe.bin` and a `London → anywhere` response
+  captured here — and both decode cleanly:
+
+      PR's fixture      3 chunks   58 destinations   46 prices  (Malta, …)
+      anywhere capture  3 chunks   64 destinations   48 prices  (Madrid, …)
+
+  The approach is right: classify each chunk by shape (destinations at
+  `chunk[3][0]`, fares at `chunk[4][0]`), accumulate across chunks, then
+  left-join fares onto destinations by knowledge-graph mid. Chunk order is not
+  assumed.
+
+  **But its fixture cannot catch its own failure mode.** The PR's capture
+  carries no length headers — three `wrb.fr` rows inside one JSON blob — so it
+  decodes on `main` as well as here. A live "anywhere" query returns the
+  *length-prefixed streaming* shape instead, which yields **0 chunks** on
+  `main`. Their CI would be green while the feature's headline use case
+  returns nothing. Any adoption should add a streaming-shape fixture, not just
+  carry theirs over.
+
+  One smaller note: `region_name` is extracted from `chunk[2][0]`, which is
+  absent on an unscoped "anywhere" query (it is `'Southern Europe'` in their
+  regional capture, `None` in ours). Harmless, but the metadata is
+  region-shaped and "anywhere" is the advertised case.
+
+  Not yet reviewed: the MCP tool (+401 in `fli/mcp/server.py`), the models
+  (+336), and the ~780 lines of tests. This assessment covers viability of the
+  data path only.
+
 ## Release notes
 
 **Breaking, and it warrants a minor bump rather than a patch.** `1a36190`
