@@ -13,16 +13,20 @@ The Service returns JSONP-flavoured responses of the form::
 the legacy parsers in this package could get away with `lstrip(")]}'")`.
 `GetBookingResults` emits two chunks, so we need a proper multi-chunk reader.
 
-Important quirk: the length headers count **characters**, not UTF-8 bytes —
-Google emits them from JavaScript's ``String.length``. When the response
-contains non-ASCII characters (airport and airline names routinely do) the
-two diverge, so the reader must walk the decoded string, not the bytes.
+Important quirk: the length headers are **not** a dependable frame delimiter.
+They count the chunk plus its two surrounding newlines, in characters rather
+than UTF-8 bytes, so any response carrying non-ASCII text (accented airport
+or airline names) desynchronises a byte-oriented reader — and an ASCII-only
+response hides the difference entirely.
 
-This was invisible until a real multi-city response was captured: every other
-endpoint we had fixtures for returns a single frame with no length header at
-all, so nothing exercised the arithmetic. Walking the bytes desyncs by one
-per extra UTF-8 byte, the next header lands mid-number, and the stream
-truncates after the first frame — nine frames decode as one, or as none.
+Rather than encode a guess about Google's convention, this reader ignores the
+announced length and lets the JSON grammar delimit each chunk, which is
+correct under either reading. The headers are used only to re-synchronise
+after a chunk that fails to parse.
+
+The defect was invisible here until a multi-frame response was captured:
+every other endpoint this package has a fixture for returns a single frame
+with no length header at all, so nothing exercised the arithmetic.
 
 This module centralises that reader and exposes :func:`iter_wrb_chunks` which
 yields the decoded inner JSON of each ``wrb.fr`` chunk.
@@ -32,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -39,67 +44,52 @@ logger = logging.getLogger(__name__)
 
 _PREFIX = ")]}'"
 
+# Framing noise between two chunks: the length header and the whitespace
+# around it. Skipped wholesale — the header's value is never trusted.
+_FRAMING_CHARS = "0123456789 \t\r\n"
+
+# A chunk boundary in the raw stream: newline, decimal length header,
+# newline, then the "[" opening the next chunk. Literal newlines are escaped
+# inside JSON strings, so this cannot match within a payload. Used only to
+# re-synchronise after an unparseable chunk.
+_CHUNK_BOUNDARY = re.compile(r"\n\d+\n(?=\[)")
+
 
 def iter_wrb_chunks(body: str | bytes) -> Iterator[Any]:
     """Yield the inner JSON object of every ``wrb.fr`` chunk in ``body``.
 
-    Robust to single-chunk responses with no length headers (the older
-    ``GetShoppingResults`` / ``GetCalendarGraph`` shape) — those are parsed
-    by falling back to a single JSON load over the trimmed body.
+    Handles both shapes Google emits: a single chunk with no length header
+    (``GetShoppingResults`` / ``GetCalendarGraph`` for simple trips) and a
+    length-prefixed stream of many (``GetBookingResults``, and multi-city
+    searches). The announced lengths are skipped as framing noise rather than
+    used as offsets — see the module docstring.
     """
-    if isinstance(body, bytes):
-        try:
-            text = body.decode("utf-8")
-        except UnicodeDecodeError:
-            logger.warning("wrb.fr body is not valid UTF-8", exc_info=True)
-            return
-    else:
-        text = body
+    # ``errors="replace"`` keeps a corrupted transfer from raising here; the
+    # affected chunk simply fails to parse and is skipped below.
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
 
     text = text.lstrip()
     if text.startswith(_PREFIX):
         text = text[len(_PREFIX) :]
     text = text.lstrip()
 
-    if not text:
-        return
-
-    # Fast path: no length headers (legacy single-chunk responses).
-    if not text[:1].isdigit():
-        try:
-            outer = json.loads(text)
-        except (ValueError, json.JSONDecodeError):
-            logger.warning("Failed to decode single-chunk wrb.fr body as JSON", exc_info=True)
-            return
-        yield from _chunks_from_outer(outer)
-        return
-
+    decoder = json.JSONDecoder()
     cursor = 0
     while cursor < len(text):
-        # Read the decimal length prefix terminated by \n.
-        end = text.find("\n", cursor)
-        if end == -1:
+        # Skip the length header and any surrounding whitespace. A
+        # header-less body simply has nothing to skip.
+        while cursor < len(text) and text[cursor] in _FRAMING_CHARS:
+            cursor += 1
+        if cursor >= len(text):
             break
         try:
-            length = int(text[cursor:end])
+            outer, cursor = decoder.raw_decode(text, cursor)
         except ValueError:
-            logger.warning(
-                "Malformed length header at offset %d; truncating chunk stream",
-                cursor,
-            )
-            break
-        # Google's length header counts the leading newline after the header
-        # AND the trailing newline that separates this chunk from the next.
-        # We've already consumed the leading newline (it terminated the header),
-        # so we read `length - 1` bytes which gives JSON + trailing \n.
-        cursor = end + 1
-        chunk_chars = max(length - 1, 0)
-        payload = text[cursor : cursor + chunk_chars]
-        cursor += chunk_chars
-        try:
-            outer = json.loads(payload.strip())
-        except (ValueError, json.JSONDecodeError):
             logger.warning("Discarding malformed wrb.fr chunk", exc_info=True)
+            boundary = _CHUNK_BOUNDARY.search(text, cursor)
+            if boundary is None:
+                break
+            cursor = boundary.end()
             continue
         yield from _chunks_from_outer(outer)
 

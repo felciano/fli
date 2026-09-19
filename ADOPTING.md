@@ -112,12 +112,37 @@ fixing there too.
   but #210's `click` declaration is already here and verified end-to-end against
   Typer 0.27.2. Only #222's undeclared-dependency half was taken. Worth revisiting
   as its own change.
-- **#224, #208, #205, #201** — all four decode or retry the `wrb.fr` error
+- **#208, #205, #201** — all three decode or retry the `wrb.fr` error
   envelope. #230 supersedes them: it added `SearchRejectedError`/
   `SearchUnsupportedError`, and `get_booking_options` now fails with a named
-  error. All four also conflict heavily with #230 in `_wire.py`/`exceptions.py`.
-  #224's second claim (chunk desync on non-ASCII) did not reproduce post-#230:
-  ZRH→GRU returns 11 results cleanly.
+  error. All three also conflict heavily with #230 in `_wire.py`/`exceptions.py`.
+
+- **#224 — half taken, and the dismissal below was wrong.** Its error-envelope
+  half is genuinely superseded by #230, as above. Its *framing* half was not,
+  and this file previously recorded it as "#224's second claim (chunk desync on
+  non-ASCII) did not reproduce post-#230: ZRH→GRU returns 11 results cleanly."
+
+  Two errors in one sentence. It is #224's **first** claim, not its second. And
+  it did not reproduce for a reason that does not generalise: post-#230 one-way
+  responses arrive as a single chunk with no length header, so there is no
+  framing arithmetic to desynchronise. ZRH→GRU could not have exercised it.
+
+  It reproduces immediately on any multi-frame response. A captured multi-city
+  body (`tests/search/fixtures/flight_search_multi_city.bin`, nine frames,
+  106 non-ASCII characters) decoded to **zero** flights, failing with exactly
+  the two errors #224 names — `Unterminated string starting at: line 1
+  column 17`, then `Malformed length header at offset N; truncating chunk
+  stream`. @olivierbarbosa's measurement was right, including the detail that
+  the header counts the chunk plus both surrounding newlines in characters,
+  which this fork independently re-measured before finding the PR said so
+  first.
+
+  The fix here is #224's design, reimplemented against #230's `_wire.py`:
+  ignore the announced length and let `json.JSONDecoder().raw_decode()`
+  delimit each chunk by the grammar, using the headers only to re-synchronise
+  after a bad chunk. That is correct under either convention — strictly better
+  than pinning today's one, which is the assumption that caused the bug. Only
+  the framing half is taken; the error envelope stays as #230 left it.
 - **#226 (Explore)** — not evaluated. It is built on `GetExploreDestinations`,
   another batchexecute RPC, so it may be behind the same `bgr` gate that killed
   `GetShoppingResults`. Worth confirming before spending review time.

@@ -166,3 +166,48 @@ class TestLengthPrefixedMultiFrame:
     def test_bytes_and_str_input_agree(self):
         body = self.FIXTURE.read_bytes()
         assert len(list(iter_wrb_chunks(body))) == len(list(iter_wrb_chunks(body.decode("utf-8"))))
+
+
+class TestFramingIsGrammarDriven:
+    """The announced length is framing noise, not an offset.
+
+    The reader derives each chunk's end from the JSON grammar, so it is
+    correct whether Google counts bytes, characters, or anything else. These
+    tests pin that independence: a header that is wrong under every
+    convention must not affect the result.
+    """
+
+    @staticmethod
+    def _framed(payloads: list[str], length_of) -> str:
+        """Build a length-prefixed body, sizing headers with *length_of*."""
+        out = [")]}'\n\n"]
+        for payload in payloads:
+            chunk = json.dumps([["wrb.fr", None, payload]])
+            out.append(f"{length_of(chunk)}\n{chunk}\n")
+        return "".join(out)
+
+    def _payload(self, tag: str) -> str:
+        return json.dumps([tag])
+
+    def test_correct_headers_parse(self):
+        body = self._framed([self._payload("a"), self._payload("b")], lambda c: len(c) + 2)
+        assert [c[0] for c in iter_wrb_chunks(body)] == ["a", "b"]
+
+    def test_byte_counted_headers_parse(self):
+        """Headers sized in UTF-8 bytes — the other convention."""
+        body = self._framed(
+            [self._payload("caf\u00e9"), self._payload("z")],
+            lambda c: len(c.encode("utf-8")) + 2,
+        )
+        assert [c[0] for c in iter_wrb_chunks(body)] == ["caf\u00e9", "z"]
+
+    def test_wildly_wrong_headers_still_parse(self):
+        """A header matching neither convention must not derail the stream."""
+        body = self._framed([self._payload("a"), self._payload("b")], lambda c: 1)
+        assert [c[0] for c in iter_wrb_chunks(body)] == ["a", "b"]
+
+    def test_non_ascii_does_not_desynchronise_a_multi_chunk_stream(self):
+        """The original defect: one accent shifted every later offset."""
+        tags = ["Z\u00fcrich", "S\u00e3o Paulo", "plain"]
+        body = self._framed([self._payload(t) for t in tags], lambda c: len(c) + 2)
+        assert [c[0] for c in iter_wrb_chunks(body)] == tags
