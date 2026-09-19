@@ -33,10 +33,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from fli.models.google_flights.base import Alliance, TripType
-from fli.search._proto import LegSpec, encode_tfs_payload, encode_tfs_segment
+from fli.search._proto import (
+    LegSpec,
+    _to_urlsafe_b64,
+    _varint_field,
+    encode_tfs_payload,
+    encode_tfs_segment,
+)
 from fli.search.exceptions import SearchUnsupportedError
 
 if TYPE_CHECKING:
@@ -52,6 +59,9 @@ _DS_KEY = re.compile(r"key:\s*'([^']+)'")
 _DS_DATA = re.compile(r"data:(.*?), sideChannel", re.S)
 
 # Passenger kinds, in the order Google's repeated field 8 expects them.
+# Trip type in tfs field 19; see multi_city_url.
+_TRIP_TYPE_MULTI_CITY = 3
+
 _PASSENGER_FIELDS = ("adults", "children", "infants_in_seat", "infants_on_lap")
 
 
@@ -192,6 +202,55 @@ def page_url(
     if currency:
         params.append(f"curr={currency}")
     return f"{PAGE_URL}?{'&'.join(params)}"
+
+
+def multi_city_url(
+    legs: Sequence[tuple[str, str, str]],
+    currency: str | None = None,
+    language: str | None = None,
+    country: str | None = None,
+) -> str:
+    """Build a Google Flights URL for a multi-city itinerary.
+
+    :func:`build_tfs` refuses ``TripType.MULTI_CITY`` because the search page
+    inlines no flight rows for it — those arrive over the RPC gated since
+    2026-08, so there is nothing for this library to read. The page itself
+    renders correctly, though. This builds the URL that renders it, so a
+    caller who cannot be given the answer can at least be given the question,
+    priced as one ticket rather than as a sum of one-way fares.
+
+    Args:
+        legs: Ordered ``(origin, destination, date)`` triples, IATA codes and
+            ``YYYY-MM-DD``. At least two.
+        currency: ISO 4217 code appended as ``curr=``.
+        language: BCP-47 code appended as ``hl=``.
+        country: ISO 3166-1 alpha-2 code appended as ``gl=``.
+
+    Returns:
+        A ``https://www.google.com/travel/flights?tfs=…`` URL.
+
+    Raises:
+        ValueError: Fewer than two legs.
+
+    """
+    if len(legs) < 2:
+        raise ValueError("A multi-city itinerary needs at least two legs")
+
+    segments = b"".join(encode_tfs_segment(origin, dest, date) for origin, dest, date in legs)
+    # Field 19 carries the trip type: 1 round-trip, 2 one-way, 3 multi-city.
+    # encode_tfs_payload only spells the first two, so the envelope is built
+    # from the same primitives it uses rather than duplicating its logic
+    # elsewhere or widening its signature for a URL-only case.
+    payload = (
+        _varint_field(1, 28)
+        + _varint_field(2, 2)
+        + segments
+        + _varint_field(8, 1)
+        + _varint_field(9, 1)
+        + _varint_field(14, 1)
+        + _varint_field(19, _TRIP_TYPE_MULTI_CITY)
+    )
+    return page_url(_to_urlsafe_b64(payload), currency, language, country)
 
 
 def extract_payload(html: str) -> Any | None:

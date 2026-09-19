@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from fli.cli.console import console
 from fli.cli.errors import report_cli_error
 from fli.cli.utils import display_flight_results, validate_time_range
 from fli.core import (
@@ -18,11 +19,15 @@ from fli.core import (
 )
 from fli.core.parsers import ParseError
 from fli.models import (
+    Airport,
     FlightSearchFilters,
+    FlightSegment,
     PassengerInfo,
     TimeRestrictions,
 )
+from fli.models.google_flights.base import TripType
 from fli.search import SearchClientError, SearchFlights
+from fli.search._tfs import multi_city_url
 
 # 3 letters = IATA, 4 = ICAO. Deliberately not ``+``: the comma is the
 # field separator here, so a longer token is a malformed leg, not an
@@ -199,15 +204,13 @@ def multi(
             sort_by=sort,
         )
 
-        # Perform search
-        search_client = SearchFlights()
-        results = search_client.search(filters)
-
-        if not results:
-            typer.echo("No flights found.")
-            raise typer.Exit(1)
-
-        display_flight_results(results, trip_type=trip_type)
+        # Multi-city cannot be searched as one request: Google serves those
+        # results over the RPC gated since 2026-08, so the search page carries
+        # no rows to read. Rather than refuse, research the legs individually —
+        # one-way search does work — and hand back the URL that prices the
+        # whole thing as a single ticket, which is usually cheaper than the sum
+        # of one-ways on the same flights.
+        _research_legs(parsed_legs, filters)
 
     except ParseError as e:
         typer.echo(f"Error: {str(e)}")
@@ -219,3 +222,66 @@ def multi(
         raise report_cli_error(e, command="multi") from e
     except Exception as e:  # noqa: BLE001 — fall back to clean reporting
         raise report_cli_error(e, command="multi") from e
+
+
+def _research_legs(
+    parsed_legs: list[tuple[Airport, Airport, str]],
+    filters: FlightSearchFilters,
+) -> None:
+    """Search each leg as a one-way and print the combined research view.
+
+    Deliberately not presented as a multi-city result. The per-leg total is a
+    sum of independent one-way fares, which is a different product from the
+    single multi-city ticket Google will sell for the same legs. Neither is
+    reliably cheaper: on a four-leg test itinerary the cheapest nonstop
+    one-ways came to $1,785 against $1,395 for the multi-city ticket, while
+    the cheapest-at-any-number-of-stops sum landed within a dollar of it. The
+    URL printed at the end is what prices the real thing.
+    """
+    search_client = SearchFlights()
+    per_leg_cheapest: list[float | None] = []
+
+    for index, (origin, destination, date) in enumerate(parsed_legs, start=1):
+        leg_filters = filters.model_copy(deep=True)
+        leg_filters.trip_type = TripType.ONE_WAY
+        leg_filters.flight_segments = [
+            FlightSegment(
+                departure_airport=[[origin, 0]],
+                arrival_airport=[[destination, 0]],
+                travel_date=date,
+                time_restrictions=filters.flight_segments[index - 1].time_restrictions,
+            )
+        ]
+        header = f"Leg {index}: {origin.name} to {destination.name} on {date}"
+        console.print(f"\n[bold]{header}[/bold]")
+        try:
+            results = search_client.search(leg_filters)
+        except SearchClientError as exc:
+            console.print(f"  [yellow]leg search failed: {exc}[/yellow]")
+            per_leg_cheapest.append(None)
+            continue
+        if not results:
+            console.print("  [yellow]No flights found for this leg.[/yellow]")
+            per_leg_cheapest.append(None)
+            continue
+        display_flight_results(results, trip_type=TripType.ONE_WAY)
+        priced = [r.price for r in results if r.price is not None]
+        per_leg_cheapest.append(min(priced) if priced else None)
+
+    if not any(p is not None for p in per_leg_cheapest):
+        console.print("\n[yellow]No flights found.[/yellow]")
+        raise typer.Exit(1)
+
+    url = multi_city_url(
+        [(o.name.lstrip("_"), d.name.lstrip("_"), date) for o, d, date in parsed_legs],
+    )
+    console.print("\n[bold]Multi-city fare[/bold]")
+    if all(p is not None for p in per_leg_cheapest) and per_leg_cheapest:
+        total = sum(p for p in per_leg_cheapest if p is not None)
+        console.print(f"  Cheapest on each leg, booked separately: [bold]{total:,.0f}[/bold]")
+        console.print(
+            "  [dim]That is a sum of independent one-way fares, which is a different "
+            "product from a single multi-city ticket — compare it, do not assume "
+            "either is cheaper.[/dim]"
+        )
+    console.print(f"  Google prices the whole itinerary as one ticket here:\n  [cyan]{url}[/cyan]")

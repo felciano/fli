@@ -21,6 +21,34 @@ def _future_date(days_ahead: int = 30) -> str:
     return (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
 
+def _make_one_way_results():
+    """Per-leg results: plain FlightResults, the shape a one-way search returns.
+
+    `multi` no longer issues a single multi-city request — there is no
+    transport for one — so each leg is searched independently and the mock
+    must return what a one-way search returns, not a tuple per itinerary.
+    """
+    now = datetime.now()
+    return [
+        FlightResult(
+            price=250.0,
+            duration=600,
+            stops=0,
+            legs=[
+                FlightLeg(
+                    airline=Airline.DL,
+                    flight_number="DL100",
+                    departure_airport=Airport.SEA,
+                    arrival_airport=Airport.HKG,
+                    departure_datetime=now,
+                    arrival_datetime=now + timedelta(hours=10),
+                    duration=600,
+                )
+            ],
+        )
+    ]
+
+
 def _make_multi_city_results():
     """Create mock multi-city results (3-tuple of FlightResults)."""
     now = datetime.now()
@@ -100,11 +128,17 @@ class TestMultiCityCommand:
             ["multi", "--leg", f"SEA,HKG,{date1}", "--leg", f"HKG,SEA,{date2}"],
         )
         assert result.exit_code == 0
-        mock_search_flights.search.assert_called_once()
+        # One search per leg: multi-city has no single-request transport, so
+        # the command researches each leg as a one-way instead of refusing.
+        assert mock_search_flights.search.call_count == 2
+        assert all(
+            c.args[0].trip_type == TripType.ONE_WAY
+            for c in mock_search_flights.search.call_args_list
+        )
 
     def test_three_leg_search(self, runner, mock_search_flights, mock_console):
         """Test multi-city search with three legs."""
-        mock_search_flights.search.return_value = _make_multi_city_results()
+        mock_search_flights.search.return_value = _make_one_way_results()
 
         date1 = _future_date(30)
         date2 = _future_date(34)
@@ -123,10 +157,20 @@ class TestMultiCityCommand:
             ],
         )
         assert result.exit_code == 0
-        mock_search_flights.search.assert_called_once()
-        args, _ = mock_search_flights.search.call_args
-        assert args[0].trip_type == TripType.MULTI_CITY
-        assert len(args[0].flight_segments) == 3
+        assert mock_search_flights.search.call_count == 3
+        calls = mock_search_flights.search.call_args_list
+        assert all(c.args[0].trip_type == TripType.ONE_WAY for c in calls)
+        # Legs are searched in the order given, one segment each.
+        routes = [
+            (
+                c.args[0].flight_segments[0].departure_airport[0][0].name,
+                c.args[0].flight_segments[0].arrival_airport[0][0].name,
+            )
+            for c in calls
+        ]
+        assert routes == [("SEA", "HKG"), ("HKG", "PEK"), ("PEK", "SEA")]
+        # Each leg is its own one-way request, so one segment per call.
+        assert all(len(c.args[0].flight_segments) == 1 for c in calls)
 
     def test_with_passengers(self, runner, mock_search_flights, mock_console):
         """Test multi-city search passes adult passenger count into filters."""
@@ -368,8 +412,10 @@ def test_multi_leg_accepts_icao_codes(runner, mock_search_flights, mock_console)
         ],
     )
     assert result.exit_code == 0
-    filters = mock_search_flights.search.call_args[0][0]
-    first, second = filters.flight_segments[0], filters.flight_segments[1]
+    calls = mock_search_flights.search.call_args_list
+    assert len(calls) == 2, "one one-way search per leg"
+    first = calls[0].args[0].flight_segments[0]
+    second = calls[1].args[0].flight_segments[0]
     assert [apt for apt, _ in first.departure_airport] == [Airport.SEA]
     assert [apt for apt, _ in first.arrival_airport] == [Airport.HKG]
     assert [apt for apt, _ in second.departure_airport] == [Airport.HKG]
@@ -410,3 +456,62 @@ def test_multi_leg_still_rejects_five_letter_codes(runner, mock_search_flights, 
     )
     assert result.exit_code != 0
     assert "Invalid leg format" in result.stdout
+
+
+class TestMultiCityResearchOutput:
+    """`multi` researches legs and links the real fare, rather than refusing.
+
+    Multi-city has no single-request transport — Google serves those results
+    over the RPC gated since 2026-08, so the search page carries no rows. The
+    command previously reported that as an error. It now searches each leg as
+    a one-way, which does work, and prints the URL that prices the itinerary
+    as one ticket.
+    """
+
+    def test_prints_a_multi_city_url(self, runner, mock_search_flights, mock_console):
+        mock_search_flights.search.return_value = _make_one_way_results()
+        result = runner.invoke(
+            app,
+            [
+                "multi",
+                "--leg",
+                f"SEA,HKG,{_future_date(30)}",
+                "--leg",
+                f"HKG,SEA,{_future_date(37)}",
+            ],
+        )
+        assert result.exit_code == 0
+        out = result.stdout.replace("\n", "")
+        assert "google.com/travel/flights?tfs=" in out
+
+    def test_labels_the_sum_as_separate_fares(self, runner, mock_search_flights, mock_console):
+        """The per-leg total must not be presented as a multi-city price."""
+        mock_search_flights.search.return_value = _make_one_way_results()
+        result = runner.invoke(
+            app,
+            [
+                "multi",
+                "--leg",
+                f"SEA,HKG,{_future_date(30)}",
+                "--leg",
+                f"HKG,SEA,{_future_date(37)}",
+            ],
+        )
+        out = " ".join(result.stdout.split())
+        assert "booked separately" in out
+        assert "sum of independent one-way fares" in out
+
+    def test_exits_nonzero_when_no_leg_has_flights(self, runner, mock_search_flights, mock_console):
+        mock_search_flights.search.return_value = []
+        result = runner.invoke(
+            app,
+            [
+                "multi",
+                "--leg",
+                f"SEA,HKG,{_future_date(30)}",
+                "--leg",
+                f"HKG,SEA,{_future_date(37)}",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "No flights found" in result.stdout

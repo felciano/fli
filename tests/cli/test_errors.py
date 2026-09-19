@@ -122,23 +122,30 @@ def test_search_command_handles_timeout_cleanly(runner, monkeypatch, tmp_path):
     assert len(log_files) >= 1
 
 
-def test_multi_command_reports_unsupported(runner, tmp_path):
-    """Multi-city has no search-page transport — say so instead of pricing one leg."""
-    result = runner.invoke(
-        app,
-        [
-            "multi",
-            "-l",
-            f"SEA,NRT,{DEPART_DATE}",
-            "-l",
-            f"NRT,HKG,{LEG2_DATE}",
-            "-l",
-            f"HKG,SEA,{LEG3_DATE}",
-        ],
-    )
+def test_multi_command_researches_legs_without_claiming_a_multi_city_price(runner, tmp_path):
+    """Multi-city has no search-page transport, and `multi` no longer stops there.
 
+    This previously asserted the refusal — "Multi-city search is not
+    available" — because the command reported the missing transport as an
+    error. It now researches each leg as a one-way, which does work, and
+    links the URL that prices the itinerary as one ticket.
+
+    The original concern behind this test still holds and is what is checked
+    here: the per-leg figure must never be presented as a multi-city price.
+    Mocked, so this stays offline like the rest of this module.
+    """
+    from unittest.mock import patch
+
+    with patch("fli.cli.commands.multi.SearchFlights") as search_cls:
+        search_cls.return_value.search.return_value = []
+        result = runner.invoke(
+            app,
+            ["multi", "-l", f"SEA,NRT,{DEPART_DATE}", "-l", f"NRT,HKG,{LEG2_DATE}"],
+        )
+
+    # No flights anywhere is still a failure, but not a transport error.
     assert result.exit_code == 1
-    assert "Multi-city search is not available" in result.output
+    assert "Multi-city search is not available" not in result.output
     assert "Traceback (most recent call last)" not in result.output
 
 

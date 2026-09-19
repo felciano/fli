@@ -37,6 +37,7 @@ from fli.search._tfs import (
     apply_client_side_filters,
     build_tfs,
     extract_payload,
+    multi_city_url,
     page_url,
     unsupported_filters,
 )
@@ -630,3 +631,47 @@ class TestCarrierAllianceAndLayoverEncoding:
         spec.alliances = [Alliance.SKYTEAM]
         spec.layover_restrictions = LayoverRestrictions(min_duration=90)
         assert unsupported_filters(spec) == []
+
+
+class TestMultiCityUrl:
+    """Multi-city cannot be *searched* here, but it can be *linked*.
+
+    ``build_tfs`` refuses MULTI_CITY because the search page inlines no rows
+    for it — the results arrive over a gated RPC. The page itself renders
+    correctly though, so the library can still hand the caller a working URL
+    even when it cannot read the answer. Trip type 3 is the whole difference.
+    """
+
+    def test_encodes_every_leg_in_order(self):
+        legs = [
+            ("LHR", "BOS", "2027-02-05"),
+            ("BOS", "SFO", "2027-02-09"),
+            ("SFO", "JFK", "2027-02-20"),
+        ]
+        url = multi_city_url(legs)
+        raw = _decode(url.split("tfs=")[1].split("&")[0])
+        for origin, dest, leg_date in legs:
+            assert origin.encode() in raw
+            assert dest.encode() in raw
+            assert leg_date.encode() in raw
+
+    def test_trip_type_is_multi_city(self):
+        url = multi_city_url([("LHR", "BOS", "2027-02-05"), ("BOS", "SFO", "2027-02-09")])
+        raw = _decode(url.split("tfs=")[1].split("&")[0])
+        # Field 19 is the trip type: 1 round-trip, 2 one-way, 3 multi-city.
+        assert b"\x98\x01\x03" in raw, "expected field 19 = 3 (multi-city)"
+
+    def test_is_a_search_page_url_not_a_booking_url(self):
+        url = multi_city_url([("LHR", "BOS", "2027-02-05"), ("BOS", "SFO", "2027-02-09")])
+        assert url.startswith("https://www.google.com/travel/flights?")
+        assert "booking" not in url
+
+    def test_locale_params_ride_along(self):
+        url = multi_city_url(
+            [("LHR", "BOS", "2027-02-05"), ("BOS", "SFO", "2027-02-09")], currency="GBP"
+        )
+        assert "curr=GBP" in url
+
+    def test_two_legs_is_the_minimum(self):
+        with pytest.raises(ValueError, match="at least two"):
+            multi_city_url([("LHR", "BOS", "2027-02-05")])
