@@ -9,6 +9,7 @@ existing parsers read an intercepted body **unchanged**.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -33,15 +34,37 @@ def captured_body() -> bytes:
     return FIXTURE.read_bytes()
 
 
+def _future_date(days_ahead: int = 30) -> str:
+    """Return a date still in the future whenever this suite is run."""
+    return (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+
+
 def _filters(**kwargs) -> ExploreSearchFilters:
     kwargs.setdefault("origin", Airport.LHR)
-    kwargs.setdefault("departure_date", "2026-10-16")
+    kwargs.setdefault("departure_date", _future_date())
     return ExploreSearchFilters(**kwargs)
+
+
+def _verified_filters() -> ExploreSearchFilters:
+    """Return the exact filters whose page load was observed firing the RPC.
+
+    Built with ``model_construct`` so the observation survives its own
+    validator: 2026-10-16 is evidence, and evidence does not stay in the
+    future. Pinning it through the normal constructor meant every test in
+    this module -- including the two that have nothing to do with dates --
+    would start erroring the day after, which is how a date-pinned fixture
+    turns into a suite-wide outage. Every other test here uses a relative
+    date, as the rest of the suite already does.
+    """
+    return ExploreSearchFilters.model_construct(
+        origin=Airport.LHR,
+        departure_date="2026-10-16",
+    )
 
 
 class TestExplorePageUrl:
     def test_reproduces_the_url_that_was_observed_firing_the_rpc(self):
-        url = explore_page_url(_filters(), currency="USD")
+        url = explore_page_url(_verified_filters(), currency="USD")
         assert url.startswith("https://www.google.com/travel/explore?tfs=")
         assert f"tfs={VERIFIED_TFS}" in url
         assert "curr=USD" in url and "hl=en" in url and "gl=US" in url
@@ -167,3 +190,54 @@ class TestWithoutTheExtra:
 def test_explore_module_imports_capture_lazily():
     """The seam holds: importing Explore must not import the browser stack."""
     assert not hasattr(explore_module, "capture_rpc_body")
+
+
+class TestTransferIsNotALayover:
+    """``summary[8]`` is a drive from the served airport, not a layover.
+
+    Read off the committed fixture, which is a verbatim intercepted body,
+    so these are Google's own numbers rather than a constructed example.
+    """
+
+    def _by_name(self, captured_body):
+        from fli.search._capture import iter_wrb_chunks
+        from fli.search._decoders import (
+            parse_explore_destinations_chunk,
+            parse_explore_prices_chunk,
+        )
+
+        merged = {}
+        for chunk in iter_wrb_chunks(captured_body):
+            try:
+                _, destinations = parse_explore_destinations_chunk(chunk)
+            except Exception:
+                destinations = []
+            for d in destinations:
+                merged.setdefault(d.mid, {})["name"] = d.name
+            try:
+                for mid, priced in parse_explore_prices_chunk(chunk).items():
+                    merged.setdefault(mid, {}).update(priced)
+            except Exception:
+                pass
+        return {v["name"]: v for v in merged.values() if "name" in v and "stops" in v}
+
+    def test_a_nonstop_flight_can_still_carry_a_transfer(self, captured_body):
+        """Galway: nonstop LHR->DUB, then 150 minutes on the ground.
+
+        As ``layover_minutes`` this read ``stops=0`` with a 2.5h layover --
+        two facts that cannot both be true.
+        """
+        rows = self._by_name(captured_body)
+        galway = rows.get("Galway")
+        if galway is None:
+            pytest.skip("fixture does not name Galway")
+        assert galway["stops"] == 0
+        assert galway["transfer_minutes"] == 150
+        assert galway["transfer_city"] == "Dublin"
+        assert galway["destination_airport"] == "DUB"
+
+    def test_the_field_no_longer_exists_under_its_old_name(self):
+        from fli.models.google_flights.explore import ExploreDestination
+
+        assert "transfer_minutes" in ExploreDestination.model_fields
+        assert "layover_minutes" not in ExploreDestination.model_fields

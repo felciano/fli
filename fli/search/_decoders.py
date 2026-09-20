@@ -671,7 +671,14 @@ def parse_explore_prices_chunk(
             "airline_name": as_str(_get_path(summary, 1)),
             "stops": as_non_negative_int(_get_path(summary, 2)),
             "duration_minutes": duration if duration and duration > 0 else None,
-            "layover_minutes": as_non_negative_int(_get_path(summary, 8)),
+            # summary[8] is the ground transfer from the served airport to
+            # the destination, not a flight layover -- summary[7] names the
+            # city it starts from and summary[10] is that city's mid. Both
+            # were being dropped, which is part of why the number looked
+            # like a layover.
+            "transfer_minutes": as_non_negative_int(_get_path(summary, 8)),
+            "transfer_city": as_str(_get_path(summary, 7)),
+            "transfer_city_mid": as_str(_get_path(summary, 10)),
             "destination_airport": as_str(_get_path(summary, 5)),
             "origin_mid": as_str(_get_path(summary, 6)),
         }

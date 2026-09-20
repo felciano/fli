@@ -46,6 +46,7 @@ from fli.models.google_flights.base import (
     PriceLimit,
     SeatType,
     TripType,
+    earliest_searchable_date,
 )
 
 
@@ -158,9 +159,17 @@ class ExploreSearchFilters(BaseModel):
     @field_validator("departure_date")
     @classmethod
     def validate_departure_date(cls, v: str) -> str:
-        """Ensure the departure date is well-formed and not in the past."""
+        """Ensure the departure date is well-formed and not in the past.
+
+        Anchored to :func:`earliest_searchable_date` rather than the local
+        clock, as ``FlightSegment`` and ``DateSearchFilters`` already are.
+        Real UTC offsets span UTC-12 to UTC+14, so a naive ``date.today()``
+        on a UTC container rejects a genuine same-day San Francisco evening
+        departure for the last seven hours of every Pacific day. Explore
+        was the one filter model still comparing against local midnight.
+        """
         parsed = datetime.strptime(v, "%Y-%m-%d").date()
-        if parsed < datetime.now().date():
+        if parsed < earliest_searchable_date():
             raise ValueError("Departure date cannot be in the past")
         return v
 
@@ -315,7 +324,29 @@ class ExploreDestination(BaseModel):
     airline_name: str | None = None
     stops: NonNegativeInt | None = None
     duration_minutes: PositiveInt | None = None
-    layover_minutes: NonNegativeInt | None = None
+    transfer_minutes: NonNegativeInt | None = None
+    """Ground transfer from :attr:`destination_airport` to the destination.
+
+    Not a flight layover, despite sitting beside ``stops``. Google's Explore
+    board routinely offers a place that has no airport of its own by pricing
+    a flight to a nearby one and quoting the drive: Galway is a nonstop
+    85-minute LHR->DUB flight plus 150 minutes from Dublin, and Killarney
+    is the same flight plus 240. Every one-stop itinerary in the committed
+    fixture carries 0 here, which is what gives it away -- a real layover
+    field would never be zero on a nine-hour one-stop.
+
+    Named ``layover_minutes`` until 2026-09-20, which produced records
+    reading ``stops=0, duration_minutes=85, layover_minutes=150``: two
+    mutually contradictory facts with nothing to tell the caller which to
+    believe.
+    """
+
+    transfer_city: str | None = None
+    """The served city the transfer starts from, when the board names one."""
+
+    transfer_city_mid: str | None = None
+    """Knowledge-graph id of :attr:`transfer_city`."""
+
     destination_airport: str | None = None
     origin_mid: str | None = None
     booking_token: str | None = None
