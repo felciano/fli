@@ -37,8 +37,8 @@ from fli.search import (
     browser_available,
 )
 from fli.search._browser import INSTALL_HINT
-from fli.search._tfs import multi_city_url
-from fli.search.exceptions import BrowserDecodeError
+from fli.search._tfs import multi_city_url, passenger_codes
+from fli.search.exceptions import SearchParseError
 
 # 3 letters = IATA, 4 = ICAO. Deliberately not ``+``: the comma is the
 # field separator here, so a longer token is a malformed leg, not an
@@ -254,6 +254,16 @@ def multi(
         # through to the generic handler below turned a deliberate exit into
         # "Unexpected error: Exit" plus a traceback log file.
         raise
+    except typer.BadParameter as e:
+        # _parse_leg raises this for a malformed --leg. The generic handler
+        # below reports the user's typo as an internal error and writes a
+        # traceback log file, which is alarming and useless for a usage
+        # mistake. Reported like ParseError -- same clean line, same exit
+        # code -- rather than re-raised to typer, which would move the
+        # message to stderr and the exit code to 2 and so change the
+        # command's contract for a defect that is only about noise.
+        typer.echo(f"Error: {str(e)}")
+        raise typer.Exit(1) from e
     except ParseError as e:
         typer.echo(f"Error: {str(e)}")
         raise typer.Exit(1) from e
@@ -327,12 +337,16 @@ def _try_board(
             language=None,
             country=None,
         )
-    except (SearchClientError, BrowserDecodeError) as exc:
-        # BrowserDecodeError subclasses SearchParseError, which this package
-        # deliberately keeps outside SearchClientError — so catching only the
-        # latter let a decode failure escape every labelled fallback and land
-        # in the command's generic handler, reported as an unexpected error
-        # rather than "the board did not decode, here is per-leg research".
+    except (SearchClientError, SearchParseError) as exc:
+        # SearchParseError is deliberately kept outside SearchClientError, so
+        # catching only the latter let a decode failure escape every labelled
+        # fallback and land in the command's generic handler, reported as an
+        # unexpected error rather than "the board did not decode, here is
+        # per-leg research". Catching the parent rather than BrowserDecodeError
+        # closes the other half of that hole: SearchMultiCity fetches the
+        # search page over plain HTTP before it ever reaches a browser, and an
+        # unparseable response there raises SearchParseError itself, which
+        # naming only the subclass did not catch.
         if browser is True:
             raise
         console.print(f"[yellow]Could not fetch the multi-city board: {escape(str(exc))}[/yellow]")
@@ -415,7 +429,14 @@ def _research_legs(
         console.print(f"\n[bold]{header}[/bold]")
         try:
             results = search_client.search(leg_filters)
-        except SearchClientError as exc:
+        except (SearchClientError, SearchParseError) as exc:
+            # SearchParseError descends from Exception, not SearchClientError,
+            # so catching only the latter let one unparseable leg abort the
+            # whole command and discard the legs that did search cleanly --
+            # the same escape already fixed for BrowserDecodeError in
+            # _try_board. A route Google serves no board for raises exactly
+            # this, which makes it routine rather than exotic in a
+            # multi-city itinerary.
             console.print(f"  [yellow]leg search failed: {escape(str(exc))}[/yellow]")
             per_leg_cheapest.append(None)
             continue
@@ -434,6 +455,9 @@ def _research_legs(
     url = multi_city_url(
         [(o.name.lstrip("_"), d.name.lstrip("_"), date) for o, d, date in parsed_legs],
         carriers=[a.name.lstrip("_") for a in (filters.airlines or [])],
+        passengers=passenger_codes(filters.passenger_info) or [1],
+        seat=filters.seat_type.value,
+        max_stops=filters.stops.value,
     )
     console.print("\n[bold]Multi-city fare[/bold]")
     if all(p is not None for p in per_leg_cheapest) and per_leg_cheapest:

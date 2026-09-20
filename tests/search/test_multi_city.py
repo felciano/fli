@@ -114,6 +114,58 @@ class TestMerge:
             decode_shopping_capture(body, context="test")
 
 
+class TestBoardBookingUrl:
+    """The board's ``booking_url`` must price the party that was searched.
+
+    ``_board`` is called directly because the wiring is the thing under
+    test: ``multi_city_url`` grew party, cabin and stop-ceiling arguments,
+    and the defect was that this call site did not pass them, so a board
+    searched for three in business linked one priced for one in economy.
+    """
+
+    def _board_for(self, filters, captured_body):
+        flights = decode_shopping_capture(captured_body, context="fixture")
+        return SearchMultiCity()._board(
+            flights,
+            filters,
+            SearchMultiCity._legs(filters),
+            None,
+            None,
+            None,
+        )
+
+    def test_party_and_cabin_reach_the_booking_url(self, captured_body):
+        import base64
+
+        solo = self._board_for(_filters(), captured_body)
+        family = self._board_for(
+            _filters(
+                passenger_info=PassengerInfo(adults=2, children=1),
+                seat_type=SeatType.BUSINESS,
+            ),
+            captured_body,
+        )
+        assert solo is not None and family is not None
+        assert solo.booking_url != family.booking_url, (
+            "a board searched for three in business must not link one priced for one in economy"
+        )
+
+        def _raw(url):
+            tok = url.split("tfs=")[1].split("&")[0]
+            return base64.urlsafe_b64decode(tok + "=" * (-len(tok) % 4))
+
+        raw = _raw(family.booking_url)
+        assert raw.count(b"\x40\x01") == 2, "expected two adults"
+        assert b"\x40\x02" in raw, "expected one child"
+        assert b"\x48\x03" in raw, "expected business cabin"
+
+    def test_stop_ceiling_reaches_the_booking_url(self, captured_body):
+        any_stops = self._board_for(_filters(stops=MaxStops.ANY), captured_body)
+        non_stop = self._board_for(_filters(stops=MaxStops.NON_STOP), captured_body)
+        assert any_stops is not None and non_stop is not None
+        assert any_stops.booking_url != non_stop.booking_url
+
+
 @pytest.mark.live
 class TestSearchMultiCity:
     def test_returns_a_board_not_a_list(self, capture_calls):

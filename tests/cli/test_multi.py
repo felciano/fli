@@ -501,6 +501,58 @@ class TestMultiCityResearchOutput:
         assert "booked separately" in out
         assert "sum of independent one-way fares" in out
 
+    def test_one_unparseable_leg_does_not_abort_the_command(
+        self, runner, mock_search_flights, mock_console
+    ):
+        """SearchParseError descends from Exception, not SearchClientError.
+
+        The per-leg loop caught only SearchClientError, so a leg Google
+        served no board for took the whole command down and discarded the
+        legs that had searched cleanly. A route with no service raises
+        exactly this, which makes it routine in a multi-city itinerary
+        rather than exotic.
+        """
+        from fli.search.exceptions import SearchParseError
+
+        mock_search_flights.search.side_effect = [
+            _make_one_way_results(),
+            SearchParseError("Shopping response shape changed"),
+        ]
+        result = runner.invoke(
+            app,
+            [
+                "multi",
+                "--leg",
+                f"SEA,HKG,{_future_date(30)}",
+                "--leg",
+                f"HKG,SEA,{_future_date(37)}",
+            ],
+        )
+        out = " ".join(result.stdout.split())
+        assert result.exit_code == 0, "one bad leg must not fail the command"
+        assert "leg search failed" in out
+        assert "Unexpected error" not in out
+        assert "google.com/travel/flights?tfs=" in out
+
+    def test_a_malformed_leg_writes_no_traceback_file(
+        self, runner, mock_search_flights, mock_console
+    ):
+        """A typo is a usage mistake, not a fault to investigate."""
+        result = runner.invoke(
+            app,
+            [
+                "multi",
+                "--leg",
+                f"KSEAX,HKG,{_future_date(30)}",
+                "--leg",
+                f"HKG,SEA,{_future_date(37)}",
+            ],
+        )
+        out = " ".join(result.stdout.split())
+        assert result.exit_code == 1
+        assert "Invalid leg format" in out
+        assert "traceback" not in out.lower()
+
     def test_exits_nonzero_when_no_leg_has_flights(self, runner, mock_search_flights, mock_console):
         mock_search_flights.search.return_value = []
         result = runner.invoke(

@@ -285,6 +285,9 @@ def multi_city_url(
     language: str | None = None,
     country: str | None = None,
     carriers: Sequence[str] = (),
+    passengers: Sequence[int] = (1,),
+    seat: int = 1,
+    max_stops: int | None = None,
 ) -> str:
     """Build a Google Flights URL for a multi-city itinerary.
 
@@ -308,6 +311,16 @@ def multi_city_url(
             to, encoded into each segment's carrier include list exactly as
             :func:`build_tfs` does. Without it a filtered search would
             research one set of flights and then link a board showing another.
+        passengers: Google's repeated field 8 party codes, as
+            :func:`passenger_codes` builds them. Defaults to a single adult.
+        seat: Cabin class as the ``SeatType`` value. Defaults to economy.
+        max_stops: Stop ceiling applied to every leg, as the ``MaxStops``
+            value, or ``None`` for no ceiling.
+
+    The last three exist for the same reason *carriers* does: this URL is
+    handed to a user as "Google prices the whole itinerary as one ticket
+    here", so a board priced for two in business must not link a board
+    priced for one in economy.
 
     Returns:
         A ``https://www.google.com/travel/flights?tfs=…`` URL.
@@ -320,10 +333,15 @@ def multi_city_url(
         raise ValueError("A multi-city itinerary needs at least two legs")
 
     segments = b"".join(
-        encode_tfs_segment(origin, dest, date, carriers=list(carriers))
+        encode_tfs_segment(origin, dest, date, carriers=list(carriers), max_stops=max_stops)
         for origin, dest, date in legs
     )
-    tfs = encode_tfs_payload(segments, trip_type=TfsTripType.MULTI_CITY)
+    tfs = encode_tfs_payload(
+        segments,
+        trip_type=TfsTripType.MULTI_CITY,
+        passengers=list(passengers) or [1],
+        seat=seat,
+    )
     return page_url(tfs, currency, language, country)
 
 

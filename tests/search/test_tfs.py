@@ -676,6 +676,35 @@ class TestMultiCityUrl:
         with pytest.raises(ValueError, match="at least two"):
             multi_city_url([("LHR", "BOS", "2027-02-05")])
 
+    def test_party_and_cabin_reach_the_url(self):
+        """The URL is handed to the user as the price of *their* itinerary.
+
+        It defaulted to one adult in economy whatever was searched, so a
+        board priced for a family in business linked a board priced for a
+        stranger. Field 8 carries one entry per traveller and field 9 the
+        cabin, so both are checkable in the decoded payload.
+        """
+        legs = [("LHR", "BOS", "2027-02-05"), ("BOS", "SFO", "2027-02-09")]
+        raw = _decode(
+            multi_city_url(legs, passengers=[1, 1, 2], seat=3).split("tfs=")[1].split("&")[0]
+        )
+        # Field 8 (0x40) once per traveller: two adults and a child.
+        assert raw.count(b"\x40\x01") == 2, "expected two adults"
+        assert b"\x40\x02" in raw, "expected one child"
+        # Field 9 (0x48) is the cabin: 3 = business.
+        assert b"\x48\x03" in raw, "expected business cabin"
+
+    def test_stop_ceiling_reaches_every_leg(self):
+        legs = [("LHR", "BOS", "2027-02-05"), ("BOS", "SFO", "2027-02-09")]
+        with_ceiling = _decode(multi_city_url(legs, max_stops=1).split("tfs=")[1].split("&")[0])
+        without = _decode(multi_city_url(legs).split("tfs=")[1].split("&")[0])
+        assert with_ceiling != without, "a stop ceiling must change the payload"
+
+    def test_defaults_are_unchanged(self):
+        """Callers that pass no party still get the old one-adult-economy URL."""
+        legs = [("LHR", "BOS", "2027-02-05"), ("BOS", "SFO", "2027-02-09")]
+        assert multi_city_url(legs) == multi_city_url(legs, passengers=[1], seat=1)
+
 
 class TestMultiCityTfs:
     """The URL the browser transport loads for a multi-city search.

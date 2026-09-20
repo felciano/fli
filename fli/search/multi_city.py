@@ -34,6 +34,7 @@ from fli.search._tfs import (
     extract_payload,
     multi_city_url,
     page_url,
+    passenger_codes,
     unsupported_filters,
 )
 from fli.search.client import get_client
@@ -219,6 +220,9 @@ class SearchMultiCity:
                 language=language,
                 country=country,
                 carriers=[_code(a) for a in (filters.airlines or [])],
+                passengers=passenger_codes(filters.passenger_info) or [1],
+                seat=filters.seat_type.value,
+                max_stops=filters.stops.value,
             ),
         )
 
