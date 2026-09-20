@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 
 from fli.models import Airport, ExplorePlace, ExploreRegion, ExploreSearchFilters
+from fli.models.google_flights.base import TripType
+from fli.models.google_flights.explore import ExploreTripLength
 from fli.search import explore as explore_module
 from fli.search._browser import RpcCapture
 from fli.search._tfs import explore_page_url
@@ -241,3 +243,93 @@ class TestTransferIsNotALayover:
 
         assert "transfer_minutes" in ExploreDestination.model_fields
         assert "layover_minutes" not in ExploreDestination.model_fields
+
+
+class TestFlexibleTripLength:
+    """Explore's trip length, reverse-engineered from the UI on 2026-09-20.
+
+    Method: load the Explore page, click the trip-length chip, and read the
+    URL Google itself produces. The reconstruction below was confirmed
+    byte-identical to Google's own tfs for "2 weeks", and each code was
+    then loaded back and read off the rendered page.
+    """
+
+    #: Google's own URL after clicking "2 weeks", captured verbatim. Its
+    #: return date is the stale 4-night default the UI had before the
+    #: click -- kept exactly as captured, because that is the evidence.
+    GOOGLE_TWO_WEEKS = (
+        "CBwQAxoVEgoyMDI2LTEwLTMwagcIARIDTEhSGhUSCjIwMjYtMTEtMDNyBwgBEgNMSFJ"
+        "AAUgBcAKCAQ0I____________ARADmAEB"
+    )
+
+    #: What each code rendered as when loaded back in the browser.
+    RENDERED = {
+        ExploreTripLength.WEEKEND: "Weekend trip in the next 6 months",
+        ExploreTripLength.ONE_WEEK: "1-week trip in the next 6 months",
+        ExploreTripLength.TWO_WEEKS: "2-week trip in the next 6 months",
+    }
+
+    def _tfs(self, url: str) -> str:
+        return url.split("tfs=")[1].split("&")[0]
+
+    def test_reproduces_googles_own_bytes(self):
+        """The encoder is checked against Google's URL, not against itself.
+
+        Built through the public encoder with the same return date Google
+        happened to carry, so a drift in any field -- the flexible-mode
+        switches at 2 and 14, the segment pair, or the length code -- shows
+        up here as a mismatch.
+        """
+        from fli.search._proto import encode_tfs_payload, encode_tfs_segment
+
+        segments = encode_tfs_segment("LHR", (), "2026-10-30") + encode_tfs_segment(
+            (), "LHR", "2026-11-03"
+        )
+        assert (
+            encode_tfs_payload(
+                segments,
+                trip_type=1,
+                passengers=[1],
+                seat=1,
+                flex_trip_length=int(ExploreTripLength.TWO_WEEKS),
+            )
+            == self.GOOGLE_TWO_WEEKS
+        )
+
+    @pytest.mark.parametrize("length", list(ExploreTripLength))
+    def test_each_length_is_a_distinct_flexible_url(self, length):
+        url = explore_page_url(_filters(trip_type=TripType.ROUND_TRIP, trip_length=length))
+        assert url.startswith("https://www.google.com/travel/explore?tfs=")
+        # Every length must differ from plain round trip and from the others.
+        plain = self._tfs(explore_page_url(_filters(trip_type=TripType.ROUND_TRIP)))
+        others = {
+            self._tfs(explore_page_url(_filters(trip_type=TripType.ROUND_TRIP, trip_length=o)))
+            for o in ExploreTripLength
+            if o is not length
+        }
+        mine = self._tfs(url)
+        assert mine != plain, "a trip length must change the request"
+        assert mine not in others, "each length must be its own request"
+
+    def test_a_free_window_is_refused_rather_than_dropped(self):
+        """It was silently ignored, which is the defect this closes.
+
+        Google offers three lengths, not a range, so an arbitrary min/max
+        has no spelling -- and the house rule here is to refuse a filter
+        rather than return a board that quietly does not match it.
+        """
+        with pytest.raises(SearchUnsupportedError, match="no free trip-length window"):
+            explore_page_url(
+                _filters(trip_type=TripType.ROUND_TRIP, trip_length_window=[4, 23, 14, 14])
+            )
+
+    def test_a_trip_length_needs_a_round_trip(self):
+        with pytest.raises(SearchUnsupportedError, match="ROUND_TRIP"):
+            explore_page_url(
+                _filters(trip_type=TripType.ONE_WAY, trip_length=ExploreTripLength.ONE_WEEK)
+            )
+
+    def test_one_way_and_plain_round_trip_are_unchanged(self):
+        """The flexible switches must not leak into the verified shapes."""
+        one_way = self._tfs(explore_page_url(_verified_filters()))
+        assert one_way == VERIFIED_TFS

@@ -114,6 +114,25 @@ def _place_token(place: ExploreLocation) -> list:
     return [place.mid, place.type_code]
 
 
+class ExploreTripLength(int, Enum):
+    """The trip lengths Explore's flexible-dates mode can actually ask for.
+
+    Not a free min/max window. Google's Explore UI offers exactly three
+    chips -- Weekend, 1 week, 2 weeks -- and the page URL encodes the choice
+    as this single code. Verified live 2026-09-20 by driving the UI and
+    reproducing its URL byte for byte: code 1 renders "Weekend trip in the
+    next 6 months", 2 renders "1-week trip", 3 renders "2-week trip", and
+    each returns a differently priced board.
+
+    This is why :attr:`ExploreSearchFilters.trip_length_window` cannot be
+    honoured as written -- see its own docstring.
+    """
+
+    WEEKEND = 1
+    ONE_WEEK = 2
+    TWO_WEEKS = 3
+
+
 class ExploreSearchFilters(BaseModel):
     """Filters for a Google Flights Explore search.
 
@@ -147,6 +166,7 @@ class ExploreSearchFilters(BaseModel):
     max_duration: PositiveInt | None = None
     bags: BagsFilter | None = None
     trip_length_window: list[int] | None = None
+    trip_length: ExploreTripLength | None = None
 
     @field_validator("trip_type")
     @classmethod

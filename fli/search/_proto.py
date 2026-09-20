@@ -363,6 +363,7 @@ def encode_tfs_payload(
     passengers: Sequence[int] = (1,),
     seat: int = 1,
     pin_max_u64: bool = False,
+    flex_trip_length: int | None = None,
 ) -> str:
     """Wrap encoded segments in the ``tfs`` envelope and base64 it.
 
@@ -379,6 +380,13 @@ def encode_tfs_payload(
         seat: Cabin class (1 = economy, 2 = premium, 3 = business, 4 = first).
         pin_max_u64: Emit the field 16 constant that booking deep links
             carry. The search page does not need it.
+        flex_trip_length: Explore's flexible-dates trip length — 1 weekend,
+            2 one week, 3 two weeks. Setting it switches the envelope into
+            flexible-dates mode (field 2 = 3, field 14 = 2) and writes the
+            length into field 16 beside the same ``_MAX_U64`` constant
+            *pin_max_u64* emits, which there means "in the next 6 months".
+            Ignored positions are Google's, not ours: verified 2026-09-20 by
+            driving the Explore UI and reproducing its URL byte for byte.
 
     Returns:
         URL-safe base64 string with padding stripped.
@@ -392,11 +400,16 @@ def encode_tfs_payload(
             raise ValueError("encode_tfs_payload needs trip_type (or the older is_one_way)")
         trip_type = TfsTripType.ONE_WAY if is_one_way else TfsTripType.ROUND_TRIP
 
-    payload = _varint_field(1, 28) + _varint_field(2, 2) + segments
+    flexible = flex_trip_length is not None
+    payload = _varint_field(1, 28) + _varint_field(2, 3 if flexible else 2) + segments
     for kind in passengers:
         payload += _varint_field(8, kind)
-    payload += _varint_field(9, seat) + _varint_field(14, 1)
-    if pin_max_u64:
+    payload += _varint_field(9, seat) + _varint_field(14, 2 if flexible else 1)
+    if flexible:
+        payload += _length_delim(
+            16, _varint_field(1, _MAX_U64) + _varint_field(2, int(flex_trip_length))
+        )
+    elif pin_max_u64:
         payload += _length_delim(16, _varint_field(1, _MAX_U64))
     payload += _varint_field(19, int(trip_type))
     return _to_urlsafe_b64(payload)

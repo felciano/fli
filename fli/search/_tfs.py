@@ -39,6 +39,7 @@ import json
 import logging
 import re
 from collections.abc import Sequence
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from fli.models.google_flights.base import Alliance, TripType
@@ -411,6 +412,24 @@ def explore_page_url(
             "and narrow the results yourself."
         )
 
+    if getattr(filters, "trip_length_window", None) is not None:
+        raise SearchUnsupportedError(
+            "Explore's page URL has no free trip-length window. Google's own "
+            "UI offers exactly three lengths -- weekend, one week, two weeks "
+            "-- and encodes the choice as a single code, so an arbitrary "
+            f"min/max pair like {filters.trip_length_window!r} has no "
+            "spelling here. Pass trip_length=ExploreTripLength.WEEKEND / "
+            "ONE_WEEK / TWO_WEEKS instead. (trip_length_window was designed "
+            "for the GetExploreDestinations RPC, which is now bgr-gated.)"
+        )
+
+    trip_length = getattr(filters, "trip_length", None)
+    if trip_length is not None and filters.trip_type == TripType.ONE_WAY:
+        raise SearchUnsupportedError(
+            "trip_length describes how long a round trip lasts, so it needs "
+            "trip_type=ROUND_TRIP. Got ONE_WAY."
+        )
+
     stops = filters.stops.value
     carriers = [_iata(a) for a in (getattr(filters, "airlines", None) or [])] + [
         a.value for a in (getattr(filters, "alliances", None) or [])
@@ -427,6 +446,24 @@ def explore_page_url(
         carriers=carriers,
         carriers_exclude=carriers_exclude,
     )
+    if trip_length is not None:
+        # Flexible dates carry a second segment coming home. Its date is a
+        # seed, not a constraint: Google left the stale 4-night default in
+        # place when the UI switched to "2 weeks" and still returned
+        # two-week trips, so the length code governs. Seeded from the code
+        # anyway, so a human reading the URL sees something coherent.
+        nights = {1: 3, 2: 7, 3: 14}[int(trip_length)]
+        back = (
+            datetime.strptime(filters.departure_date, "%Y-%m-%d") + timedelta(days=nights)
+        ).strftime("%Y-%m-%d")
+        segment += encode_tfs_segment(
+            (),
+            _iata(origin),
+            back,
+            max_stops=stops - 1 if stops else None,
+            carriers=carriers,
+            carriers_exclude=carriers_exclude,
+        )
     tfs = encode_tfs_payload(
         segment,
         trip_type=(
@@ -434,6 +471,7 @@ def explore_page_url(
         ),
         passengers=passenger_codes(filters.passenger_info) or [1],
         seat=filters.seat_type.value,
+        flex_trip_length=int(trip_length) if trip_length is not None else None,
     )
     params = [f"tfs={tfs}", f"hl={language or 'en'}", f"gl={country or 'US'}"]
     if currency:
