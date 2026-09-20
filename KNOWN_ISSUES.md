@@ -54,3 +54,32 @@ it.
 CLI output text, which several tests pin, and #215 was scoped to the MCP
 surface. Confirmed pre-existing: output is byte-identical with the #215
 production changes stashed.
+
+## 3. Some obscure airport pairs return a page with no `ds:1` payload
+
+**Severity:** low — affects routes nobody searches, but it is the last cause
+of fuzz-suite failures and shares issue 1's misleading message.
+
+For a minority of airport pairs the search page comes back without its `ds:1`
+payload at all, surfacing as:
+
+```
+SearchParseError: Search page carried no ds:1 payload — Google may have changed
+the page shape, or served a consent/blocked page instead.
+```
+
+Measured 2026-09-20 on this branch: of 100 randomly generated fuzz routes, 10
+fail this way (`PPI→BEP`, `FBR→CKC`, `RKO→CMC`, `CBO→LUE`, `SYN→GWV`,
+`GXX→AFW`, `RGR→GYZ` among them). These are **not** the past-date case in
+issue 1 — every generated date is in 2027 — so the grace window is not the
+trigger. The remaining 90 now pass: a route with no service returns a
+well-formed payload with empty row slots and is correctly reported as "no
+flights" rather than a shape change.
+
+**Why it is not fixed here:** the cause is not yet known. It needs a capture of
+what Google actually serves for these pairs before the message can honestly be
+narrowed — the current text is a guess that happens to be wrong in this case,
+and replacing one guess with another is not an improvement. The fuzz suite is
+the reproduction: `uv run pytest tests/search/test_search_flights_fuzz.py
+--fuzz`.
+

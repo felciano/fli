@@ -323,6 +323,61 @@ class TestSearchParseErrorMessage:
             + ", sideChannel: {}});</script>"
         )
 
+    def _jfk_lax(self) -> FlightSearchFilters:
+        return FlightSearchFilters(
+            passenger_info=PassengerInfo(adults=1),
+            flight_segments=[
+                FlightSegment(
+                    departure_airport=[[Airport.JFK, 0]],
+                    arrival_airport=[[Airport.LAX, 0]],
+                    travel_date=(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+                )
+            ],
+        )
+
+    def test_an_empty_board_is_not_a_shape_change(self, monkeypatch):
+        """A route with no service must not be blamed on the wire format.
+
+        Measured live: PKY (Palangkaraya) to BVI (Birdsville) returns a
+        well-formed 32-element payload with [2] and [3] both None -- one
+        element *longer* than a working LHR->JFK. Reporting that as
+        "Shopping response shape changed" sent people to debug the
+        decoder when they had asked for a route nobody flies, and is
+        what made the fuzz suite look broken against random pairs.
+        """
+        import json
+
+        payload = [[None, None, None, None, "FAKE_SESSION"], None, None, None]
+        body = (
+            "<script>AF_initDataCallback({key: 'ds:1', hash: '1', data:"
+            + json.dumps(payload, separators=(",", ":"))
+            + ", sideChannel: {}});</script>"
+        )
+        sf = self._client_with_canned_response(monkeypatch, body)
+        assert sf.search(self._jfk_lax()) is None
+
+    def test_a_missing_row_slot_is_still_a_shape_change(self, monkeypatch):
+        """The regression signal must survive: absent slots still raise.
+
+        This is the half that must not be collapsed. A payload too short
+        to hold the slots at all is a wire-format change, and reporting
+        it as "no flights found" would hide exactly the breakage the
+        decoder exists to notice.
+        """
+        import json
+
+        from fli.search.flights import SearchParseError
+
+        payload = [[None, None, None, None, "FAKE_SESSION"], None]
+        body = (
+            "<script>AF_initDataCallback({key: 'ds:1', hash: '1', data:"
+            + json.dumps(payload, separators=(",", ":"))
+            + ", sideChannel: {}});</script>"
+        )
+        sf = self._client_with_canned_response(monkeypatch, body)
+        with pytest.raises(SearchParseError, match="shape changed"):
+            sf.search(self._jfk_lax())
+
     def test_error_includes_sample_failure_reasons(self, monkeypatch):
         """When all rows fail, the error message names what went wrong."""
         from fli.search.flights import SearchParseError

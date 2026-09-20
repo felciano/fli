@@ -74,6 +74,43 @@ def flight_rows(chunk: Any) -> list | None:
     return rows if found else None
 
 
+def row_slots_are_empty(chunk: Any) -> bool:
+    """Report whether the row slots are present and carry nothing.
+
+    :func:`flight_rows` returns ``None`` for two structurally different
+    responses: one whose ``[2]``/``[3]`` slots are missing or malformed,
+    which means the wire format changed, and one whose slots are present
+    and empty, which means Google returned a board with nothing on it.
+
+    What an empty board *means* is not decidable here, and this function
+    deliberately does not try. Measured live on 2026-09-20, two very
+    different requests produce byte-identical empty slots:
+
+    * ``PKY`` to ``BVI`` -- a route nobody flies -- returns a well-formed
+      32-element payload with ``[2]`` and ``[3]`` both ``None``.
+    * A true multi-city open jaw (``LHR->BOS``, ``JFK->LHR``) returns a
+      24-element payload, also with both slots ``None``. That one is not
+      "no flights" at all; it is Google declining to serve the board
+      inline, and the browser transport fetches it successfully.
+
+    Only the caller knows which question it asked, so only the caller can
+    read the answer. Callers must not collapse this into "no flights".
+
+    Args:
+        chunk: One decoded payload, as :func:`flight_rows` takes.
+
+    Returns:
+        ``True`` when index 2 exists and every present row slot is
+        ``None`` or an empty list; ``False`` otherwise, including for a
+        slot holding something unexpected, which is a shape change.
+
+    """
+    if not isinstance(chunk, list) or len(chunk) <= 2:
+        return False
+    slots = [chunk[index] for index in (2, 3) if index < len(chunk)]
+    return all(slot is None or (isinstance(slot, list) and not slot) for slot in slots)
+
+
 def parse_flight_row(row: list) -> FlightResult:
     """Decode a single flight row into a structured :class:`FlightResult`.
 

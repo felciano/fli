@@ -28,6 +28,7 @@ from fli.search._decoders import (
     flight_rows,
     parse_booking_chunk,
     parse_flight_row,
+    row_slots_are_empty,
 )
 from fli.search._tfs import (
     apply_client_side_filters,
@@ -274,6 +275,17 @@ class SearchFlights:
 
         flights_raw = flight_rows(inner)
         if flights_raw is None:
+            if row_slots_are_empty(inner):
+                # Present-but-empty row slots: Google answered, and the
+                # answer is that it has no itineraries for this route.
+                # Measured live -- PKY->BVI returns a well-formed
+                # 32-element payload with [2] and [3] both None, one
+                # element *longer* than a working LHR->JFK. Raising a
+                # shape-change error here told users Google had changed
+                # its page when they had simply asked for a route nobody
+                # flies, which is also why the fuzz suite "failed"
+                # against random airport pairs.
+                return None
             raise SearchParseError(
                 "Shopping response shape changed — no flights array at inner[2]/[3]"
             )
