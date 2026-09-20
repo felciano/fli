@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from fli.cli.main import app
 from fli.models import Airline, Airport, FlightLeg, FlightResult
 from fli.models.google_flights.base import TripType
+from tests.cli._output import collapsed, plain
 
 
 @pytest.fixture
@@ -481,7 +482,7 @@ class TestMultiCityResearchOutput:
             ],
         )
         assert result.exit_code == 0
-        out = result.stdout.replace("\n", "")
+        out = plain(result.stdout)
         assert "google.com/travel/flights?tfs=" in out
 
     def test_labels_the_sum_as_separate_fares(self, runner, mock_search_flights, mock_console):
@@ -497,7 +498,7 @@ class TestMultiCityResearchOutput:
                 f"HKG,SEA,{_future_date(37)}",
             ],
         )
-        out = " ".join(result.stdout.split())
+        out = collapsed(result.stdout)
         assert "booked separately" in out
         assert "sum of independent one-way fares" in out
 
@@ -528,7 +529,7 @@ class TestMultiCityResearchOutput:
                 f"HKG,SEA,{_future_date(37)}",
             ],
         )
-        out = " ".join(result.stdout.split())
+        out = collapsed(result.stdout)
         assert result.exit_code == 0, "one bad leg must not fail the command"
         assert "leg search failed" in out
         assert "Unexpected error" not in out
@@ -548,7 +549,7 @@ class TestMultiCityResearchOutput:
                 f"HKG,SEA,{_future_date(37)}",
             ],
         )
-        out = " ".join(result.stdout.split())
+        out = collapsed(result.stdout)
         assert result.exit_code == 1
         assert "Invalid leg format" in out
         assert "traceback" not in out.lower()

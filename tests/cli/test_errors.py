@@ -16,6 +16,7 @@ from fli.search.exceptions import (
     SearchHTTPError,
     SearchTimeoutError,
 )
+from tests.cli._output import plain
 
 
 def _future_date(days_ahead: int) -> str:
@@ -342,4 +343,4 @@ class TestMarkupInErrorMessages:
             command="multi",
         )
         assert isinstance(exit_signal, typer.Exit)
-        assert "flights[browser]" in capsys.readouterr().out.replace("\n", "")
+        assert "flights[browser]" in plain(capsys.readouterr().out)

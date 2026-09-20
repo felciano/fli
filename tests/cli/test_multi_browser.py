@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from fli.cli.main import app
 from fli.models import Airline, Airport, FlightLeg, FlightResult, MultiCityBoard
 from fli.search.exceptions import BrowserRpcTimeoutError
+from tests.cli._output import plain
 
 pytestmark = pytest.mark.wants_browser
 
@@ -27,8 +28,8 @@ def runner() -> CliRunner:
 
 
 def _unwrapped(text: str) -> str:
-    """Undo the console's line wrapping so a message can be matched whole."""
-    return text.replace("\n", "")
+    """Undo the console's wrapping *and* styling so a message matches whole."""
+    return plain(text)
 
 
 def _future(days: int) -> str:
@@ -92,7 +93,7 @@ class TestBoardPath:
         assert result.exit_code == 0
         assert "Multi-city board" in result.stdout
         assert "ENTIRE" in result.stdout
-        assert "tfs=BOARD" in result.stdout
+        assert "tfs=BOARD" in _unwrapped(result.stdout)
         # Each option must not be headed "One-way Flight", which is what the
         # generic renderer says unless it is told the trip type.
         assert "One-way Flight" not in result.stdout
