@@ -16,6 +16,8 @@ from fli.models import (
 )
 from fli.search import SearchFlights
 
+pytestmark = pytest.mark.live
+
 
 @pytest.fixture
 def search():

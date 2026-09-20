@@ -248,7 +248,7 @@ jobs:
       - name: Run tests
         run: |
           uv run pytest tests/ --all -v \
-            --ignore=tests/search/ \
+            -m "not live" \
             -k "not test_search_dates_round_trip" \
             --junitxml=junit.xml
         env:

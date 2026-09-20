@@ -114,6 +114,7 @@ class TestMerge:
             decode_shopping_capture(body, context="test")
 
 
+@pytest.mark.live
 class TestSearchMultiCity:
     def test_returns_a_board_not_a_list(self, capture_calls):
         board = SearchMultiCity().search(_filters())
@@ -296,6 +297,7 @@ class TestForcedBrowserTransport:
             client.search(self._one_way(), transport=Transport.AUTO)
 
 
+@pytest.mark.live
 class TestNoAutomaticRetry:
     """A refused or timed-out capture is reported, never re-fired.
 
