@@ -209,9 +209,28 @@ fixing there too.
   regional capture, `None` in ours). Harmless, but the metadata is
   region-shaped and "anywhere" is the advertised case.
 
-  Not yet reviewed: the MCP tool (+401 in `fli/mcp/server.py`), the models
-  (+336), and the ~780 lines of tests. This assessment covers viability of the
-  data path only.
+  **The MCP tool is not adoptable, and the reason is structural.** Explore is
+  `bgr`-gated, so the browser is its only working transport and
+  `SearchExplore.search` defaults to `Transport.AUTO`. ADR 001 requires that
+  the MCP server never spawn a browser — it is a long-lived process, and
+  `tests/test_http_path_stays_on_http.py` enforces it down to the source text.
+  That leaves an Explore tool with two spellings and no third: pin
+  `Transport.HTTP` and ship a tool that answers error 13 every time, or leave
+  the default and ship a server that launches Chrome. Multi-city reached the
+  same fork and shipped no tool; Explore goes the same way, and
+  `test_the_server_exposes_no_explore_tool` now pins it so the omission reads
+  as a decision rather than an oversight.
+
+  Closing it turned up a real hole: `BROWSER_MODULES` listed `multi_city` but
+  not `explore`, so the guard would have stayed green while the MCP server
+  imported `SearchExplore` and reached a browser through it — the exact
+  mistake it exists to catch. `fli.search.explore` is now listed.
+
+  The models (+336) and the data path are adopted and extended here; see the
+  Explore work on `feat/browser-transport`. Of the ~780 lines of tests, what
+  is worth taking is the cases, not the files: their fixture cannot exercise
+  the streaming shape (above), and this fork's `explore_anywhere_lhr.bin`
+  can.
 
 ## Release notes
 

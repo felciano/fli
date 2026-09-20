@@ -42,6 +42,14 @@ BROWSER_MODULES = frozenset(
         "fli.search._browser",
         "fli.search._capture",
         "fli.search.multi_city",
+        # Explore belongs here for the same reason multi_city does: it is
+        # bgr-gated, so its only working transport is the browser and its
+        # ``search`` defaults to ``Transport.AUTO``. Listing only multi_city
+        # left the guard with a hole shaped exactly like the mistake it
+        # exists to catch -- the MCP server could have imported
+        # ``SearchExplore`` and reached a browser with every other check
+        # still green.
+        "fli.search.explore",
     }
 )
 
@@ -171,6 +179,21 @@ class TestMcpNeverSpawnsABrowser:
         """v1 ships none, for the same long-lived-process reason."""
         source = MCP_SERVER.read_text(encoding="utf-8")
         assert "SearchMultiCity" not in source
+
+    def test_the_server_exposes_no_explore_tool(self):
+        """Upstream #226 ships one; it cannot be adopted here, and why.
+
+        Explore is bgr-gated -- a direct request answers error 13 -- so the
+        browser is its only working transport. That leaves an MCP tool with
+        two spellings and no third: pin ``Transport.HTTP`` and ship a tool
+        that always fails, or leave the default and ship a long-lived
+        server that launches Chrome. Multi-city reached the same fork and
+        shipped no tool; this records that Explore did too, so the next
+        reader finds the reasoning instead of the omission.
+        """
+        source = MCP_SERVER.read_text(encoding="utf-8")
+        assert "SearchExplore" not in source
+        assert "ExploreSearchFilters" not in source
 
 
 class TestContainment:
