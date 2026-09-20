@@ -24,10 +24,18 @@ prose and code drift apart.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
-import tomllib
+
+if sys.version_info >= (3, 11):  # pragma: no cover - version-dependent import
+    import tomllib
+else:  # pragma: no cover - version-dependent import
+    tomllib = pytest.importorskip(
+        "tomli",
+        reason="Python 3.10 needs the tomli backport; it is declared in the dev extra",
+    )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DECISIONS = REPO_ROOT / "docs" / "decisions"
