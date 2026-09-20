@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 
 from fli.cli.console import console
 from fli.search.exceptions import (
@@ -95,7 +96,11 @@ def report_cli_error(
     log_path = _write_log(exc, command=command)
     message = _friendly_message(exc)
 
-    console.print(f"[red]Error:[/red] {message}")
+    # Escaped, because an error message is data and rich reads square
+    # brackets as markup. Unescaped, the browser transport's own advice —
+    # `uv add "flights[browser]"` — printed as `uv add "flights"`, i.e. the
+    # exact install command the user needs, minus the part that matters.
+    console.print(f"[red]Error:[/red] {escape(message)}")
     if log_path is not None:
         console.print(f"[dim]Full traceback written to {log_path}[/dim]")
 

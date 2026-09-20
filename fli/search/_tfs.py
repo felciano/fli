@@ -23,9 +23,14 @@ neither encoded nor filtered after the fact is reported by
 :func:`unsupported_filters` so the caller can warn rather than silently
 return results that ignore it.
 
-Multi-city is out of reach here entirely: the page inlines no rows for it,
-so :func:`build_tfs` refuses those searches rather than returning the first
-leg's one-way board.
+Multi-city is out of reach *over HTTP* entirely: the page renders the right
+board but inlines no rows for it — verified again 2026-09-20, on a three-leg
+and on an open-jaw two-leg itinerary, both of which return a ``ds:1`` payload
+with nothing at ``[2]``/``[3]``. (A two-leg A→B/B→A "multi-city" does inline
+rows, because Google normalises it to a round trip; that is not the multi-city
+case.) So :func:`build_tfs` still refuses those searches rather than returning
+the first leg's one-way board, and :func:`build_multi_city_tfs` builds the URL
+that the browser transport loads instead — see :mod:`fli.search.multi_city`.
 """
 
 from __future__ import annotations
@@ -39,8 +44,7 @@ from typing import TYPE_CHECKING, Any
 from fli.models.google_flights.base import Alliance, TripType
 from fli.search._proto import (
     LegSpec,
-    _to_urlsafe_b64,
-    _varint_field,
+    TfsTripType,
     encode_tfs_payload,
     encode_tfs_segment,
 )
@@ -58,10 +62,9 @@ _DS_BLOB = re.compile(r"AF_initDataCallback\((\{.*?\})\);", re.S)
 _DS_KEY = re.compile(r"key:\s*'([^']+)'")
 _DS_DATA = re.compile(r"data:(.*?), sideChannel", re.S)
 
-# Passenger kinds, in the order Google's repeated field 8 expects them.
-# Trip type in tfs field 19; see multi_city_url.
-_TRIP_TYPE_MULTI_CITY = 3
+PAGE_EXPLORE_URL = "https://www.google.com/travel/explore"
 
+# Passenger kinds, in the order Google's repeated field 8 expects them.
 _PASSENGER_FIELDS = ("adults", "children", "infants_in_seat", "infants_on_lap")
 
 
@@ -120,40 +123,24 @@ def _legs_of(flight: FlightResult) -> list[LegSpec]:
     ]
 
 
-def build_tfs(filters: Any, *, travel_dates: list[str] | None = None) -> str:
-    """Build the ``tfs`` URL parameter for ``filters``.
+def _encode_segments(filters: Any, travel_dates: list[str] | None = None) -> bytes:
+    """Encode every travel direction in ``filters`` as ``tfs`` field 3 bytes.
+
+    Shared by :func:`build_tfs` and :func:`build_multi_city_tfs`, which differ
+    only in the trip type they stamp on the envelope and in which trip types
+    they accept. Forking this loop is how the two would drift.
 
     Args:
-        filters: A ``FlightSearchFilters`` or ``DateSearchFilters``. Both
-            carry ``trip_type``, ``passenger_info``, ``flight_segments``,
-            ``stops`` and ``seat_type``, which is all this encoder reads.
+        filters: A ``FlightSearchFilters`` or ``DateSearchFilters``.
         travel_dates: Optional per-segment date overrides, used by the date
             sweep to reprice one segment set across a range without
             deep-copying the whole filter object per day.
 
     Returns:
-        The base64url ``tfs`` value, unpadded, as Google's own URLs carry it.
-
-    Raises:
-        SearchUnsupportedError: For multi-city trips, which this transport
-            cannot serve at all.
+        The concatenated segment bytes.
 
     """
-    # Field 19 is the trip type. Multi-city is 3, but sending 2 (one-way)
-    # makes Google ignore every segment past the first and serve the first
-    # leg's one-way board, which decodes cleanly into wrong results; sending
-    # 3 renders the right board in a browser but inlines no flight rows —
-    # multi-city is fetched client-side through the RPC gated since 2026-08.
-    if filters.trip_type == TripType.MULTI_CITY:
-        raise SearchUnsupportedError(
-            "Multi-city search is not available through the search-page transport: "
-            "Google loads those results client-side through the gated RPC, so the "
-            "page carries no rows to read. Search each leg separately. "
-            "See github.com/punitarani/fli#223."
-        )
-
     stops = filters.stops.value
-    passengers = passenger_codes(filters.passenger_info)
 
     # Airline codes and alliance names share one pair of carrier lists
     # (segment fields 6 and 7), so both ride in together.
@@ -182,13 +169,101 @@ def build_tfs(filters: Any, *, travel_dates: list[str] | None = None) -> str:
             min_layover=getattr(layovers, "min_duration", None),
             max_layover=getattr(layovers, "max_duration", None),
         )
+    return segments
 
+
+def _envelope(filters: Any, segments: bytes, trip_type: TfsTripType) -> str:
+    """Wrap encoded segments with the party and cabin ``filters`` describe.
+
+    Args:
+        filters: The filters the segments came from.
+        segments: Output of :func:`_encode_segments`.
+        trip_type: The ``tfs`` field 19 value to stamp.
+
+    Returns:
+        The base64url ``tfs`` value, unpadded.
+
+    """
     return encode_tfs_payload(
         segments,
-        is_one_way=filters.trip_type == TripType.ONE_WAY,
-        passengers=passengers or [1],
+        trip_type=trip_type,
+        passengers=passenger_codes(filters.passenger_info) or [1],
         seat=filters.seat_type.value,
     )
+
+
+def build_tfs(filters: Any, *, travel_dates: list[str] | None = None) -> str:
+    """Build the ``tfs`` URL parameter for ``filters``.
+
+    Args:
+        filters: A ``FlightSearchFilters`` or ``DateSearchFilters``. Both
+            carry ``trip_type``, ``passenger_info``, ``flight_segments``,
+            ``stops`` and ``seat_type``, which is all this encoder reads.
+        travel_dates: Optional per-segment date overrides, used by the date
+            sweep to reprice one segment set across a range without
+            deep-copying the whole filter object per day.
+
+    Returns:
+        The base64url ``tfs`` value, unpadded, as Google's own URLs carry it.
+
+    Raises:
+        SearchUnsupportedError: For multi-city trips, which *this* transport
+            cannot serve. The refusal is correct and stays: this is a pure
+            encoder for the HTTP search-page path, and routing does not
+            belong in it.
+
+    """
+    # Field 19 is the trip type. Multi-city is 3, but sending 2 (one-way)
+    # makes Google ignore every segment past the first and serve the first
+    # leg's one-way board, which decodes cleanly into wrong results; sending
+    # 3 renders the right board in a browser but inlines no flight rows —
+    # multi-city is fetched client-side through the RPC gated since 2026-08.
+    if filters.trip_type == TripType.MULTI_CITY:
+        raise SearchUnsupportedError(
+            "Multi-city search is not available through the search-page transport: "
+            "Google loads those results client-side through the gated RPC, so the "
+            "page carries no rows to read. fli can read it with the optional "
+            "browser transport — install `flights[browser]` and use "
+            "fli.search.SearchMultiCity, which returns a first-leg board priced "
+            "for the entire trip. Without it, search each leg separately. "
+            "See github.com/punitarani/fli#223."
+        )
+
+    return _envelope(
+        filters,
+        _encode_segments(filters, travel_dates),
+        TfsTripType.ONE_WAY if filters.trip_type == TripType.ONE_WAY else TfsTripType.ROUND_TRIP,
+    )
+
+
+def build_multi_city_tfs(filters: Any) -> str:
+    """Build the ``tfs`` parameter for a multi-city search page.
+
+    Identical to :func:`build_tfs` but for the trip type stamped on the
+    envelope, so a multi-city URL carries exactly the stop ceiling, cabin,
+    party, carrier lists and layover bounds the caller asked for. The page it
+    addresses inlines no rows; :class:`fli.search.multi_city.SearchMultiCity`
+    loads it in a browser and intercepts the RPC that fills it.
+
+    Args:
+        filters: A ``FlightSearchFilters`` with ``trip_type`` MULTI_CITY.
+
+    Returns:
+        The base64url ``tfs`` value, unpadded.
+
+    Raises:
+        ValueError: *filters* is not a multi-city search, or has fewer than
+            two segments.
+
+    """
+    if filters.trip_type != TripType.MULTI_CITY:
+        raise ValueError(
+            f"build_multi_city_tfs is for multi-city searches; got {filters.trip_type!r}. "
+            "Use build_tfs for one-way and round-trip."
+        )
+    if len(filters.flight_segments) < 2:
+        raise ValueError("A multi-city itinerary needs at least two segments")
+    return _envelope(filters, _encode_segments(filters), TfsTripType.MULTI_CITY)
 
 
 def page_url(
@@ -213,12 +288,15 @@ def multi_city_url(
 ) -> str:
     """Build a Google Flights URL for a multi-city itinerary.
 
-    :func:`build_tfs` refuses ``TripType.MULTI_CITY`` because the search page
-    inlines no flight rows for it — those arrive over the RPC gated since
-    2026-08, so there is nothing for this library to read. The page itself
-    renders correctly, though. This builds the URL that renders it, so a
-    caller who cannot be given the answer can at least be given the question,
-    priced as one ticket rather than as a sum of one-way fares.
+    This is the plain-URL form, taking bare ``(origin, destination, date)``
+    triples rather than a filter object: it is what the CLI prints when it
+    cannot fetch the board itself, and what
+    :class:`~fli.models.MultiCityBoard` carries as its ``booking_url``. It
+    must keep working on an install with no browser extra, so it grows no
+    import that needs one.
+
+    :func:`build_multi_city_tfs` is the filter-driven sibling used to address
+    the page the browser transport actually loads.
 
     Args:
         legs: Ordered ``(origin, destination, date)`` triples, IATA codes and
@@ -245,20 +323,104 @@ def multi_city_url(
         encode_tfs_segment(origin, dest, date, carriers=list(carriers))
         for origin, dest, date in legs
     )
-    # Field 19 carries the trip type: 1 round-trip, 2 one-way, 3 multi-city.
-    # encode_tfs_payload only spells the first two, so the envelope is built
-    # from the same primitives it uses rather than duplicating its logic
-    # elsewhere or widening its signature for a URL-only case.
-    payload = (
-        _varint_field(1, 28)
-        + _varint_field(2, 2)
-        + segments
-        + _varint_field(8, 1)
-        + _varint_field(9, 1)
-        + _varint_field(14, 1)
-        + _varint_field(19, _TRIP_TYPE_MULTI_CITY)
+    tfs = encode_tfs_payload(segments, trip_type=TfsTripType.MULTI_CITY)
+    return page_url(tfs, currency, language, country)
+
+
+def explore_page_url(
+    filters: Any,
+    currency: str | None = None,
+    language: str | None = None,
+    country: str | None = None,
+) -> str:
+    """Build the Explore page URL whose load fires ``GetExploreDestinations``.
+
+    Verified live 2026-09-20 against the running service: navigating to
+    ``/travel/explore?tfs=…`` with a segment carrying *only* a date and an
+    origin (field 13) makes the page issue ``GetExploreDestinations``, whose
+    body decodes through the existing Explore decoders unchanged — 66
+    destinations, 52 of them priced, for ``LHR`` on ``2026-10-16``. A bare
+    ``/travel/explore`` with no ``tfs`` fires nothing at all: the empty page
+    waits for an origin, so the parameter is not optional.
+
+    Scope, stated because it is narrower than :class:`ExploreSearchFilters`:
+
+    * **Origin must be an airport.** The verified encoding is field 13's
+      ``{1: 1, 2: "<IATA>"}`` pair. A knowledge-graph ``ExplorePlace`` origin
+      has no tested spelling here.
+    * **Destination must be "anywhere".** Writing a mid into field 14 was
+      tried live and did *not* narrow the board — ``/m/0250wj`` (Southern
+      Europe) returned Edinburgh, Amsterdam and Berlin among 147 results,
+      i.e. Google ignored it. Rather than ship a filter that silently does
+      nothing, a narrowed destination is refused here.
+
+    Stop ceiling, cabin, party and carrier lists ride in the same ``tfs``
+    fields the flights page reads. They are carried through on the strength
+    of that shared envelope rather than on a live A/B of each one, so treat
+    them as plausible-but-unproven and prefer reporting a wrong result over
+    assuming one.
+
+    Args:
+        filters: An :class:`~fli.models.ExploreSearchFilters`.
+        currency: ISO 4217 code appended as ``curr=``.
+        language: BCP-47 code appended as ``hl=``.
+        country: ISO 3166-1 alpha-2 code appended as ``gl=``.
+
+    Returns:
+        A ``https://www.google.com/travel/explore?tfs=…`` URL.
+
+    Raises:
+        SearchUnsupportedError: The origin is not an airport, or the
+            destination is anything other than "anywhere".
+
+    """
+    from fli.models.google_flights.explore import ExploreRegion
+
+    origin = filters.origin
+    if not hasattr(origin, "name") or getattr(origin, "mid", None) is not None:
+        raise SearchUnsupportedError(
+            "The browser-backed Explore transport addresses its page by an "
+            "airport origin; a knowledge-graph place has no verified spelling "
+            f"in the page URL. Got origin={origin!r}. Pass an Airport."
+        )
+    if filters.destination is not ExploreRegion.ANYWHERE:
+        raise SearchUnsupportedError(
+            "The browser-backed Explore transport can only search 'anywhere': "
+            "writing a destination region into the page URL was tested live "
+            "and Google ignored it, so honouring "
+            f"destination={filters.destination!r} would mean returning a "
+            "board that quietly does not match the filter. Search anywhere "
+            "and narrow the results yourself."
+        )
+
+    stops = filters.stops.value
+    carriers = [_iata(a) for a in (getattr(filters, "airlines", None) or [])] + [
+        a.value for a in (getattr(filters, "alliances", None) or [])
+    ]
+    carriers_exclude = [_iata(a) for a in (getattr(filters, "airlines_exclude", None) or [])] + [
+        a.value for a in (getattr(filters, "alliances_exclude", None) or [])
+    ]
+    segment = encode_tfs_segment(
+        _iata(origin),
+        # ``dest=()`` writes no field 14 at all, which is the verified shape.
+        (),
+        filters.departure_date,
+        max_stops=stops - 1 if stops else None,
+        carriers=carriers,
+        carriers_exclude=carriers_exclude,
     )
-    return page_url(_to_urlsafe_b64(payload), currency, language, country)
+    tfs = encode_tfs_payload(
+        segment,
+        trip_type=(
+            TfsTripType.ONE_WAY if filters.trip_type == TripType.ONE_WAY else TfsTripType.ROUND_TRIP
+        ),
+        passengers=passenger_codes(filters.passenger_info) or [1],
+        seat=filters.seat_type.value,
+    )
+    params = [f"tfs={tfs}", f"hl={language or 'en'}", f"gl={country or 'US'}"]
+    if currency:
+        params.append(f"curr={currency}")
+    return f"{PAGE_EXPLORE_URL}?{'&'.join(params)}"
 
 
 def extract_payload(html: str) -> Any | None:

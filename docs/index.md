@@ -17,7 +17,14 @@ filter encoding, same wire-format decoders.
 
 ## Key Features
 
-* **Direct API access** — no scraping, no browser automation, no HTML parsing.
+* **Direct API access** — results are decoded from Google's own wire format,
+  never read off the rendered page. No HTML parsing, no DOM selectors.
+* **No browser by default** — `uv add flights` installs none and never starts
+  one. Multi-city and Explore are the exception: Google serves those only to
+  its own JavaScript, so they need the opt-in `flights[browser]` extra, which
+  drives a browser to *intercept* the response and then decodes it with the
+  same parsers. See
+  [ADR 001](https://github.com/punitarani/fli/blob/main/docs/decisions/001-optional-browser-backed-transport.md).
 * **Rich search** — one-way, round-trip, and multi-city; cabin classes; stop
   and layover limits; airline/alliance include & exclude; currency and locale.
 * **Cheapest-date search** — scan a flexible date window for the best fares.

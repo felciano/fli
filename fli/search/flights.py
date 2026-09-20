@@ -25,6 +25,7 @@ from fli.models.google_flights.base import PassengerInfo, SortBy, TripType
 from fli.search._concurrency import parallel_map
 from fli.search._decoders import (
     _try_parse_booking_row,  # noqa: F401 — back-compat re-export for tests
+    flight_rows,
     parse_booking_chunk,
     parse_flight_row,
 )
@@ -40,17 +41,14 @@ from fli.search._urls import with_locale_params
 from fli.search._urls import with_locale_params as _with_locale_params  # noqa: F401
 from fli.search._wire import iter_wrb_chunks
 from fli.search.client import get_client
+from fli.search.exceptions import (
+    BrowserTransportUnavailableError,
+    SearchParseError,
+    SearchUnsupportedError,
+)
+from fli.search.transport import Transport
 
 logger = logging.getLogger(__name__)
-
-
-class SearchParseError(Exception):
-    """Raised when a successful HTTP response cannot be parsed into flights.
-
-    Distinct from network / HTTP errors raised by the underlying client —
-    use this to tell "Google responded but the shape changed" apart from
-    "Google didn't respond at all".
-    """
 
 
 def _sort_key(sort_by: SortBy) -> Callable[[FlightResult], Any]:
@@ -130,6 +128,7 @@ class SearchFlights:
         currency: str | None = None,
         language: str | None = None,
         country: str | None = None,
+        transport: Transport = Transport.AUTO,
     ) -> list[FlightResult | tuple[FlightResult, ...]] | None:
         """Search for flights using the given :class:`FlightSearchFilters`.
 
@@ -140,23 +139,40 @@ class SearchFlights:
             currency: Optional ISO 4217 currency code (``curr`` URL param).
             language: Optional BCP-47 language code (``hl`` URL param).
             country: Optional ISO 3166-1 alpha-2 country code (``gl`` URL param).
+            transport: Which transport to use. ``AUTO`` (the default) reaches
+                exactly the code today's callers reach for one-way and
+                round-trip. ``HTTP`` forbids the browser whatever is
+                installed — what the MCP server passes. ``BROWSER`` forces
+                interception, which is how the browser path is validated
+                against a known-good HTTP result on the same ``tfs`` token.
 
         Returns:
             For one-way trips, a list of :class:`FlightResult`. For
-            round-trip / multi-city, a list of tuples of
-            :class:`FlightResult` (one per segment, in order). ``None``
-            when no results.
+            round-trip, a list of tuples of :class:`FlightResult` (one per
+            segment, in order). ``None`` when no results.
 
         Raises:
+            SearchUnsupportedError: The search is multi-city. A multi-city
+                result is a first-leg board priced for the entire trip, not
+                a list of itineraries, so it is served by
+                :class:`fli.search.SearchMultiCity`, which returns a
+                :class:`~fli.models.MultiCityBoard` that says so in its type.
+                Redirecting costs the caller one line; returning a
+                ``list[FlightResult]`` whose prices mean something different
+                from every other such list costs them a wrong answer with no
+                signal.
             Exception: HTTP failure or unparseable response.
 
         """
+        if filters.trip_type == TripType.MULTI_CITY:
+            self._refuse_multi_city(transport)
         flights = self._fetch_flights(
             filters,
             currency=currency,
             language=language,
             country=country,
             capture_session=True,
+            transport=transport,
         )
         if flights is None:
             return None
@@ -171,6 +187,39 @@ class SearchFlights:
             country=country,
         )
 
+    @staticmethod
+    def _refuse_multi_city(transport: Transport) -> None:
+        """Send a multi-city caller to the class that can answer them.
+
+        Two different messages, because the two situations need different
+        actions: without the extra there is an install to do, with it there
+        is a class to call.
+
+        Args:
+            transport: The transport the caller asked for.
+
+        Raises:
+            BrowserTransportUnavailableError: The extra is not installed.
+            SearchUnsupportedError: It is, and the caller should use
+                :class:`fli.search.SearchMultiCity`.
+
+        """
+        from fli.search._browser import INSTALL_HINT, browser_available
+
+        if transport is not Transport.HTTP and not browser_available():
+            raise BrowserTransportUnavailableError(
+                "Multi-city results are served only over the optional browser "
+                f"transport, which is not installed. To enable it, {INSTALL_HINT}, "
+                "then use fli.search.SearchMultiCity. Without it, search each "
+                "leg separately and compare against the multi-city URL from "
+                "fli.search._tfs.multi_city_url."
+            )
+        raise SearchUnsupportedError(
+            "Multi-city results are a first-leg board priced for the entire "
+            "trip, not itineraries — use fli.search.SearchMultiCity, which "
+            "returns MultiCityBoard."
+        )
+
     def _fetch_flights(
         self,
         filters: FlightSearchFilters,
@@ -179,6 +228,7 @@ class SearchFlights:
         language: str | None,
         country: str | None,
         capture_session: bool,
+        transport: Transport = Transport.AUTO,
     ) -> list[FlightResult] | None:
         """Issue one ``GetShoppingResults`` call and decode the flight rows.
 
@@ -189,6 +239,11 @@ class SearchFlights:
         not write to that field — both because the writes would race and
         because the user-visible session id should describe the original
         shopping query, not whichever expansion completed last.
+
+        ``transport`` is ``AUTO`` or ``HTTP`` for every caller but a
+        deliberate ``Transport.BROWSER`` validation run; the two are the same
+        code path here, because everything this method serves is something
+        HTTP can serve.
         """
         dropped = unsupported_filters(filters)
         if dropped:
@@ -197,7 +252,13 @@ class SearchFlights:
                 ", ".join(dropped),
             )
 
-        url = page_url(build_tfs(filters), currency, language, country)
+        tfs = build_tfs(filters)
+        url = page_url(tfs, currency, language, country)
+
+        if transport is Transport.BROWSER:
+            flights = self._fetch_flights_via_browser(url, filters)
+            return flights or None
+
         response = self.client.get(url, impersonate="chrome")
         response.raise_for_status()
 
@@ -211,14 +272,11 @@ class SearchFlights:
         if capture_session:
             self._capture_session_id(inner)
 
-        try:
-            flights_raw = [
-                item for i in (2, 3) if isinstance(inner[i], list) for item in inner[i][0]
-            ]
-        except (IndexError, TypeError) as e:
+        flights_raw = flight_rows(inner)
+        if flights_raw is None:
             raise SearchParseError(
-                f"Shopping response shape changed — no flights array at inner[2]/[3]: {e}"
-            ) from e
+                "Shopping response shape changed — no flights array at inner[2]/[3]"
+            )
 
         flights: list[FlightResult] = []
         # Bounded ring of unique failure reasons — we only surface the
@@ -252,6 +310,48 @@ class SearchFlights:
         flights = apply_client_side_filters(flights, filters)
         flights.sort(key=_sort_key(filters.sort_by))
         return flights or None
+
+    def _fetch_flights_via_browser(
+        self,
+        url: str,
+        filters: FlightSearchFilters,
+    ) -> list[FlightResult]:
+        """Fetch a board by intercepting the page's own RPC response.
+
+        Only reached for an explicit ``Transport.BROWSER``. It exists to
+        validate the browser transport against a known-good HTTP result on
+        the same ``tfs`` token — one browser run, one HTTP run, compared
+        offline — rather than to be a second search engine.
+
+        No shopping session id is captured here, so
+        :meth:`get_booking_options` still needs an ``AUTO``/``HTTP`` search
+        (or an explicit ``session_id``) to work. The intercepted body does
+        carry one, but reading it would mean this method knowing the
+        response's envelope layout, and the decode seam deliberately stops
+        at flight rows.
+
+        Args:
+            url: The search-page URL to load.
+            filters: The search, for the client-side filters and sort that
+                the HTTP path also applies.
+
+        Returns:
+            The merged board, filtered and sorted like the HTTP path's.
+
+        """
+        from fli.search._browser import BrowserOptions, capture_rpc_body
+        from fli.search._capture import decode_shopping_capture
+        from fli.search.multi_city import SHOPPING_RPC_MARKER
+
+        capture = capture_rpc_body(
+            url,
+            rpc_marker=SHOPPING_RPC_MARKER,
+            options=BrowserOptions.from_env(),
+        )
+        flights = decode_shopping_capture(capture.body, context="search page")
+        flights = apply_client_side_filters(flights, filters)
+        flights.sort(key=_sort_key(filters.sort_by))
+        return flights
 
     def get_booking_options(
         self,
@@ -536,6 +636,11 @@ class SearchFlights:
         def expand(outbound: FlightResult):
             next_filters = deepcopy(filters)
             next_filters.flight_segments[selected_count].selected_flight = outbound
+            # Deliberately not parameterised by ``transport``: this runs
+            # inside ``parallel_map``, and the browser transport is not
+            # thread-safe and must never be driven from there. A round trip
+            # forced onto the browser would also cost one page load per
+            # candidate against a deliberately gated endpoint.
             sub_flights = self._fetch_flights(
                 next_filters,
                 currency=currency,

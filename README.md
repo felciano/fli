@@ -11,7 +11,13 @@ flights, find the best deals, and filter results with ease.
 > This means:
 >
 > * **Fast**: Direct API access means faster, more reliable results
-> * **Zero Scraping**: No HTML parsing, no browser automation, just pure API interaction
+> * **No scraping**: results are decoded from Google's own wire format, never
+>   read off the rendered page — no HTML parsing, no DOM selectors
+> * **No browser by default**: `uv add flights` installs no browser and never
+>   starts one. Two searches Google serves only to its own JavaScript —
+>   multi-city and Explore — need the opt-in `flights[browser]` extra, which
+>   drives a browser purely to *intercept* the response and hands it to the
+>   same decoders. Everything else stays on plain HTTP
 > * **Reliable**: Less prone to breaking from UI changes
 > * **Modular**: Extensible architecture for easy customization and integration
 
@@ -123,6 +129,37 @@ pipx install flights
 # Get started with CLI
 fli --help
 ```
+
+### Optional: multi-city and Explore
+
+Google serves multi-city boards and Explore results only to its own page
+JavaScript, behind a header no plain HTTP client can produce. Fli can read
+them by driving a browser and intercepting the response — but that browser is
+never installed unless you ask for it, and it is two steps, because the wheel
+is not the browser:
+
+```bash
+uv add "flights[browser]"     # the Playwright wheel
+playwright install chromium   # the actual browser
+```
+
+Then:
+
+```bash
+fli multi -l LHR,BOS,2026-10-16 -l BOS,CDG,2026-10-23 -l CDG,LHR,2026-10-30
+```
+
+Without the extra, `fli multi` prints one line saying so and falls back to
+searching each leg as an independent one-way, plus the Google Flights URL that
+prices the whole itinerary as one ticket. That fallback is not deleted and not
+deprecated — it is the honest answer for an install with no browser.
+
+The multi-city board is **options for the first leg, each priced for the
+entire trip**; `SearchMultiCity` returns a `MultiCityBoard` rather than a plain
+result list so that distinction cannot be missed. The MCP server never starts
+a browser. See
+[ADR 001](https://github.com/punitarani/fli/blob/main/docs/decisions/001-optional-browser-backed-transport.md)
+for the reasoning and the costs.
 
 ![CLI Demo](https://raw.githubusercontent.com/punitarani/fli/main/docs/assets/cli-demo.png)
 

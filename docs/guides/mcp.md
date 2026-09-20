@@ -12,6 +12,9 @@ pipx install flights
 pip install flights
 ```
 
+The MCP server needs no browser and never starts one — see
+[The server never starts a browser](#the-server-never-starts-a-browser) below.
+
 ## Running the Server
 
 ### Run over STDIO
@@ -66,6 +69,27 @@ Add this configuration to your `claude_desktop_config.json`:
     comma-separated list. ICAO coverage is a curated table of 281 major
     airports rather than the full ICAO register; an unmapped 4-letter code
     fails with an error saying so, and the IATA code always works.
+
+### The server never starts a browser
+
+`fli` has an optional `browser` extra that drives a real browser to intercept
+two responses Google serves only to its own JavaScript — multi-city boards and
+Explore. **No MCP tool uses it.** Every search below runs on the plain HTTP
+transport, explicitly and unconditionally, and that holds even when the extra
+is installed, as it is under `pip install "flights[all]"`.
+
+This is a deliberate fit-to-contract rather than an oversight. MCP servers are
+long-lived and frequently headless or containerised; a tool call that spawns
+Chrome and waits ten seconds for a page to settle is a poor citizen in that
+setting, and it would draw traffic against a deliberately gated endpoint on a
+schedule no operator is watching. So an `flights[mcp,browser]` install cannot
+launch a browser by accident — there is no configuration that makes it.
+
+The visible consequence: **there is no multi-city MCP tool.** For a multi-city
+itinerary, use the `fli multi` CLI command or the `SearchMultiCity` Python API,
+both of which document that the board is options for the *first leg*, each
+priced for the entire trip. `search_flights` remains one-way and round-trip
+only.
 
 ### `search_flights`
 
@@ -322,6 +346,9 @@ The MCP server can be configured via environment variables:
 | `FLI_MCP_DEFAULT_SORT_BY` | Default sorting strategy | CHEAPEST |
 | `FLI_MCP_DEFAULT_DEPARTURE_WINDOW` | Default departure window (HH-HH) | null |
 | `FLI_MCP_MAX_RESULTS` | Maximum results returned | null (no limit) |
+
+The `FLI_BROWSER_*` variables that configure the optional browser transport are
+not read here, because no MCP tool reaches it.
 
 ## Example Conversations
 

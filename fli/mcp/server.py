@@ -40,7 +40,7 @@ from fli.models import (
     PassengerInfo,
     TripType,
 )
-from fli.search import SearchDates, SearchFlights
+from fli.search import SearchDates, SearchFlights, Transport
 
 
 class FlightSearchConfig(BaseSettings):
@@ -693,6 +693,12 @@ def _execute_flight_search(params: FlightSearchParams) -> dict[str, Any]:
             currency=currency,
             language=params.language,
             country=params.country,
+            # Explicit, not inherited. MCP servers are long-lived and often
+            # headless or containerised, and a tool call that spawns Chrome
+            # for ten seconds is a poor fit for that contract — so an
+            # ``flights[mcp,browser]`` install can never launch a browser by
+            # accident. There is no multi-city MCP tool for the same reason.
+            transport=Transport.HTTP,
         )
 
         booking_url = _google_flights_url(
@@ -773,6 +779,12 @@ def _execute_booking_options(
             currency=currency,
             language=params.language,
             country=params.country,
+            # Explicit, not inherited. MCP servers are long-lived and often
+            # headless or containerised, and a tool call that spawns Chrome
+            # for ten seconds is a poor fit for that contract — so an
+            # ``flights[mcp,browser]`` install can never launch a browser by
+            # accident. There is no multi-city MCP tool for the same reason.
+            transport=Transport.HTTP,
         )
 
         booking_url = _google_flights_url(

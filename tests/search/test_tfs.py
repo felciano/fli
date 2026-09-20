@@ -675,3 +675,77 @@ class TestMultiCityUrl:
     def test_two_legs_is_the_minimum(self):
         with pytest.raises(ValueError, match="at least two"):
             multi_city_url([("LHR", "BOS", "2027-02-05")])
+
+
+class TestMultiCityTfs:
+    """The URL the browser transport loads for a multi-city search.
+
+    ``build_tfs`` keeps refusing multi-city — it is the encoder for the HTTP
+    path, and the HTTP path genuinely cannot serve it. ``build_multi_city_tfs``
+    is the sibling that stamps trip type 3, for the page a browser loads.
+    """
+
+    def _multi(self, **kwargs):
+        return _filters(
+            [
+                ("LHR", "BOS", "2026-10-16"),
+                ("BOS", "CDG", "2026-10-23"),
+                ("CDG", "LHR", "2026-10-30"),
+            ],
+            trip_type=TripType.MULTI_CITY,
+            **kwargs,
+        )
+
+    def test_stamps_trip_type_three(self):
+        from fli.search._tfs import build_multi_city_tfs
+
+        assert _decode(build_multi_city_tfs(self._multi())).endswith(b"\x98\x01\x03")
+
+    def test_reproduces_the_url_whose_capture_was_verified_live(self):
+        """Pinned to the exact token that produced 15 itineraries on 2026-09-20.
+
+        Not a tautology: the same three legs go through ``multi_city_url``'s
+        plain-triples path and through the filter-driven builder, and the two
+        must agree or the board fetched will not be the board linked.
+        """
+        from fli.search._tfs import build_multi_city_tfs, multi_city_url, page_url
+
+        verified = (
+            "CBwQAhoeEgoyMDI2LTEwLTE2agcIARIDTEhScgcIARIDQk9TGh4SCjIwMjYtMTAtMjNq"
+            "BwgBEgNCT1NyBwgBEgNDREcaHhIKMjAyNi0xMC0zMGoHCAESA0NER3IHCAESA0xIUkAB"
+            "SAFwAZgBAw"
+        )
+        from_filters = page_url(build_multi_city_tfs(self._multi()), "USD")
+        from_legs = multi_city_url(
+            [
+                ("LHR", "BOS", "2026-10-16"),
+                ("BOS", "CDG", "2026-10-23"),
+                ("CDG", "LHR", "2026-10-30"),
+            ],
+            currency="USD",
+        )
+        assert f"tfs={verified}" in from_filters
+        assert from_filters == from_legs
+
+    def test_it_carries_the_cabin_the_caller_asked_for(self):
+        """The plain-triples URL cannot; that is why the sibling exists."""
+        from fli.search._tfs import build_multi_city_tfs
+
+        economy = build_multi_city_tfs(self._multi())
+        business = build_multi_city_tfs(self._multi(seat_type=SeatType.BUSINESS))
+        assert economy != business
+
+    def test_a_one_way_search_is_refused(self):
+        from fli.search._tfs import build_multi_city_tfs
+
+        spec = _filters([("LHR", "BOS", "2026-10-16")])
+        with pytest.raises(ValueError, match="multi-city"):
+            build_multi_city_tfs(spec)
+
+    def test_build_tfs_refusal_now_names_the_way_out(self):
+        """The refusal is still correct; it should not also be a dead end."""
+        with pytest.raises(SearchUnsupportedError) as excinfo:
+            build_tfs(self._multi())
+        message = str(excinfo.value)
+        assert "SearchMultiCity" in message
+        assert "flights[browser]" in message

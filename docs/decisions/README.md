@@ -12,7 +12,7 @@ no consequences, it belongs somewhere else.
 
 | # | Title | Status | Date |
 |---|---|---|---|
-| [001](001-optional-browser-backed-transport.md) | Add an optional browser-backed transport for requests the HTTP transport cannot serve | Proposed | 2026-09-18 |
+| [001](001-optional-browser-backed-transport.md) | Add an optional browser-backed transport for requests the HTTP transport cannot serve | Accepted | 2026-09-18 |
 
 No gaps in the sequence.
 

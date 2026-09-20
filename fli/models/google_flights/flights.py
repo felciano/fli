@@ -2,6 +2,7 @@ import json
 import urllib.parse
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -15,6 +16,7 @@ from fli.models.google_flights.base import (
     Alliance,
     BagsFilter,
     EmissionsFilter,
+    FlightResult,
     FlightSegment,
     LayoverRestrictions,
     MaxStops,
@@ -329,3 +331,41 @@ class FlightSearchFilters(BaseModel):
         wrapped_filters = [None, formatted_json]
         # Finally, encode the whole thing
         return urllib.parse.quote(json.dumps(wrapped_filters, separators=(",", ":")))
+
+
+class MultiCityBoard(BaseModel):
+    """What a multi-city search can actually tell you: a first-leg board.
+
+    Deliberately not a bare ``list[FlightResult]``. Every other list of
+    results this library returns holds complete, independently priced
+    itineraries; a multi-city board holds **options for the first leg only,
+    each carrying the price of the entire trip**. Returning that as an
+    ordinary result list is a trap that reads correctly and means something
+    else — a caller summing it, or comparing it against a one-way search,
+    gets a wrong answer with no signal that anything is different.
+
+    The price basis was confirmed live (2026-09-20): on
+    ``LHR→BOS 2026-10-16 / BOS→CDG / CDG→LHR``, the board priced nonstop
+    ``B61621`` at 1666 USD, while the same flight on a one-way ``LHR→BOS``
+    search for the same day priced at 923 USD.
+
+    Attributes:
+        results: Options for the leg at *board_leg_index*, cheapest first.
+        board_leg_index: Which leg these options belong to. Always ``0``
+            today; the field exists so that expanding to a full itinerary
+            later is not a breaking change.
+        price_basis: What each result's ``price`` covers. Always the entire
+            trip — the whole reason this wrapper exists.
+        legs: The itinerary that was asked for, as ``(origin, destination,
+            date)`` triples.
+        booking_url: Google Flights URL that prices the whole itinerary as
+            one ticket. Built without a browser, so it is still useful when
+            the board itself could not be fetched.
+
+    """
+
+    results: list[FlightResult]
+    board_leg_index: int = 0
+    price_basis: Literal["entire_trip"] = "entire_trip"
+    legs: list[tuple[str, str, str]]
+    booking_url: str

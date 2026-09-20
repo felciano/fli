@@ -27,7 +27,7 @@ from .explore import (
     ExploreResult,
     ExploreSearchFilters,
 )
-from .flights import FlightSearchFilters
+from .flights import FlightSearchFilters, MultiCityBoard
 
 __all__ = [
     "Airline",
@@ -43,6 +43,7 @@ __all__ = [
     "FlightResult",
     "FlightSearchFilters",
     "FlightSegment",
+    "MultiCityBoard",
     "Layover",
     "LayoverRestrictions",
     "MaxStops",

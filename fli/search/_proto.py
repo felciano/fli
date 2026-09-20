@@ -35,6 +35,7 @@ import base64
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import IntEnum
 
 logger = logging.getLogger(__name__)
 
@@ -331,10 +332,34 @@ def encode_tfs_segment(
     return _length_delim(3, body)
 
 
+class TfsTripType(IntEnum):
+    """``tfs`` field 19 values — the trip type the URL asks Google for.
+
+    Distinct from :class:`fli.models.google_flights.base.TripType`, which is
+    the library's own vocabulary and numbers these differently. Keeping the
+    wire values in their own enum is what stops the two being confused at a
+    call site.
+
+    Attributes:
+        ROUND_TRIP: Two segments, out and back.
+        ONE_WAY: A single segment.
+        MULTI_CITY: Two or more independent segments, priced as one ticket.
+            The search page renders this but inlines no rows for it, so it is
+            reachable only through the browser transport — see
+            :mod:`fli.search.multi_city`.
+
+    """
+
+    ROUND_TRIP = 1
+    ONE_WAY = 2
+    MULTI_CITY = 3
+
+
 def encode_tfs_payload(
     segments: bytes,
     *,
-    is_one_way: bool,
+    trip_type: TfsTripType | int | None = None,
+    is_one_way: bool | None = None,
     passengers: Sequence[int] = (1,),
     seat: int = 1,
     pin_max_u64: bool = False,
@@ -343,9 +368,12 @@ def encode_tfs_payload(
 
     Args:
         segments: Concatenated output of :func:`encode_tfs_segment`.
-        is_one_way: ``True`` for one-way, ``False`` for round-trip.
-            Controls field 19. Multi-city is a third value (3) that the
-            search page cannot serve — see :func:`fli.search._tfs.build_tfs`.
+        trip_type: The field 19 value, as a :class:`TfsTripType`. Preferred
+            over *is_one_way*, which cannot spell multi-city at all.
+        is_one_way: Deprecated two-valued spelling of *trip_type*: ``True``
+            for one-way, ``False`` for round-trip. Kept so existing callers
+            and their tests are unaffected. Ignored when *trip_type* is
+            given.
         passengers: Passenger kind codes, one entry per traveller
             (1 = adult, 2 = child, 3 = infant in seat, 4 = infant on lap).
         seat: Cabin class (1 = economy, 2 = premium, 3 = business, 4 = first).
@@ -355,14 +383,22 @@ def encode_tfs_payload(
     Returns:
         URL-safe base64 string with padding stripped.
 
+    Raises:
+        ValueError: Neither *trip_type* nor *is_one_way* was given.
+
     """
+    if trip_type is None:
+        if is_one_way is None:
+            raise ValueError("encode_tfs_payload needs trip_type (or the older is_one_way)")
+        trip_type = TfsTripType.ONE_WAY if is_one_way else TfsTripType.ROUND_TRIP
+
     payload = _varint_field(1, 28) + _varint_field(2, 2) + segments
     for kind in passengers:
         payload += _varint_field(8, kind)
     payload += _varint_field(9, seat) + _varint_field(14, 1)
     if pin_max_u64:
         payload += _length_delim(16, _varint_field(1, _MAX_U64))
-    payload += _varint_field(19, 2 if is_one_way else 1)
+    payload += _varint_field(19, int(trip_type))
     return _to_urlsafe_b64(payload)
 
 

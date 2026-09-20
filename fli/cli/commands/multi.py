@@ -4,6 +4,7 @@ import re
 from typing import Annotated
 
 import typer
+from rich.markup import escape
 
 from fli.cli.console import console
 from fli.cli.errors import report_cli_error
@@ -22,12 +23,22 @@ from fli.models import (
     Airport,
     FlightSearchFilters,
     FlightSegment,
+    MultiCityBoard,
     PassengerInfo,
     TimeRestrictions,
 )
 from fli.models.google_flights.base import TripType
-from fli.search import SearchClientError, SearchFlights
+from fli.search import (
+    BrowserOptions,
+    SearchClientError,
+    SearchFlights,
+    SearchMultiCity,
+    board_total,
+    browser_available,
+)
+from fli.search._browser import INSTALL_HINT
 from fli.search._tfs import multi_city_url
+from fli.search.exceptions import BrowserDecodeError
 
 # 3 letters = IATA, 4 = ICAO. Deliberately not ``+``: the comma is the
 # field separator here, so a longer token is a malformed leg, not an
@@ -143,6 +154,27 @@ def multi(
             min=0,
         ),
     ] = 0,
+    browser: Annotated[
+        bool | None,
+        typer.Option(
+            "--browser/--no-browser",
+            help=(
+                "Fetch the real multi-city board through the optional browser "
+                "transport. Default: use it when installed, fall back to "
+                "per-leg research when not. --no-browser never starts one."
+            ),
+        ),
+    ] = None,
+    browser_cdp: Annotated[
+        str | None,
+        typer.Option(
+            "--browser-cdp",
+            help=(
+                "Attach to a Chrome already listening for CDP, e.g. "
+                "http://127.0.0.1:9222, instead of launching one."
+            ),
+        ),
+    ] = None,
 ):
     """Search for multi-city flights with multiple legs.
 
@@ -204,14 +236,24 @@ def multi(
             sort_by=sort,
         )
 
-        # Multi-city cannot be searched as one request: Google serves those
-        # results over the RPC gated since 2026-08, so the search page carries
-        # no rows to read. Rather than refuse, research the legs individually —
-        # one-way search does work — and hand back the URL that prices the
-        # whole thing as a single ticket, which is usually cheaper than the sum
-        # of one-ways on the same flights.
+        # Multi-city over HTTP carries no rows: Google fills that board from
+        # the RPC gated since 2026-08. With the optional browser transport we
+        # can read the real board; without it we research the legs
+        # individually — one-way search does work — and hand back the URL
+        # that prices the whole thing as a single ticket. Which of the two
+        # the user got is stated on screen either way; a research view that
+        # reads like a multi-city answer is worse than no answer.
+        board = _try_board(filters, browser=browser, browser_cdp=browser_cdp)
+        if board is not None:
+            _print_board(board)
+            return
         _research_legs(parsed_legs, filters)
 
+    except typer.Exit:
+        # Typer's own control flow, not a failure to report. Letting it fall
+        # through to the generic handler below turned a deliberate exit into
+        # "Unexpected error: Exit" plus a traceback log file.
+        raise
     except ParseError as e:
         typer.echo(f"Error: {str(e)}")
         raise typer.Exit(1) from e
@@ -222,6 +264,119 @@ def multi(
         raise report_cli_error(e, command="multi") from e
     except Exception as e:  # noqa: BLE001 — fall back to clean reporting
         raise report_cli_error(e, command="multi") from e
+
+
+def _try_board(
+    filters: FlightSearchFilters,
+    *,
+    browser: bool | None,
+    browser_cdp: str | None,
+) -> MultiCityBoard | None:
+    """Fetch the real multi-city board, or say plainly why we are not.
+
+    Never silent. Every path that ends without a board prints one yellow
+    line naming the reason first, because the fallback that follows looks
+    like a multi-city answer and is not one.
+
+    Args:
+        filters: The multi-city search.
+        browser: ``True`` to require the browser, ``False`` to forbid it,
+            ``None`` to use it when it is installed.
+        browser_cdp: A CDP endpoint to attach to instead of launching.
+
+    Returns:
+        The board, or ``None`` to fall back to per-leg research.
+
+    Raises:
+        typer.Exit: ``--browser`` was given explicitly and the extra is not
+            installed.
+        SearchClientError: ``--browser`` was given explicitly and the
+            browser failed. An explicit request gets an error, not a quiet
+            downgrade to a different product.
+
+    """
+    if browser is False:
+        console.print(
+            "[yellow]--no-browser: showing per-leg research instead of the "
+            "real multi-city board.[/yellow]"
+        )
+        return None
+
+    if not browser_available():
+        message = (
+            "The multi-city board needs the optional browser transport, which "
+            f"is not installed — to enable it, {INSTALL_HINT}."
+        )
+        # ``escape``: the message names ``flights[browser]``, and rich reads
+        # square brackets as markup — unescaped it prints ``flights``, which
+        # is a different (and wrong) install command.
+        if browser is True:
+            console.print(f"[red]{escape(message)}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[yellow]{escape(message)} Showing per-leg research instead.[/yellow]")
+        return None
+
+    options = BrowserOptions.from_env()
+    if browser_cdp:
+        options = options.model_copy(update={"cdp_endpoint": browser_cdp})
+
+    try:
+        board = SearchMultiCity(options).search(
+            filters,
+            currency=None,
+            language=None,
+            country=None,
+        )
+    except (SearchClientError, BrowserDecodeError) as exc:
+        # BrowserDecodeError subclasses SearchParseError, which this package
+        # deliberately keeps outside SearchClientError — so catching only the
+        # latter let a decode failure escape every labelled fallback and land
+        # in the command's generic handler, reported as an unexpected error
+        # rather than "the board did not decode, here is per-leg research".
+        if browser is True:
+            raise
+        console.print(f"[yellow]Could not fetch the multi-city board: {escape(str(exc))}[/yellow]")
+        console.print("[yellow]Showing per-leg research instead.[/yellow]")
+        return None
+
+    if board is None:
+        console.print("[yellow]Google returned no multi-city itineraries for these legs.[/yellow]")
+        console.print("[yellow]Showing per-leg research instead.[/yellow]")
+        return None
+    return board
+
+
+def _print_board(board: MultiCityBoard) -> None:
+    """Print a fetched board, labelled for what it is.
+
+    Args:
+        board: The board to show.
+
+    """
+    first_leg = board.legs[board.board_leg_index]
+    console.print(
+        f"\n[bold]Multi-city board — leg {board.board_leg_index + 1}: "
+        f"{first_leg[0]} to {first_leg[1]} on {first_leg[2]}[/bold]"
+    )
+    console.print(
+        "[dim]These are options for that leg only. Each price is for the "
+        "ENTIRE multi-city trip on one ticket, not for this leg — so do not "
+        "add them up or compare them with a one-way fare.[/dim]"
+    )
+    # MULTI_CITY, not ONE_WAY: with ONE_WAY every option was headed "One-way
+    # Flight Option N", directly contradicting the caveat printed just above
+    # it. The rows are single ``FlightResult``s either way, so the only thing
+    # this changes is the label — and the label was the wrong one.
+    display_flight_results(board.results, trip_type=TripType.MULTI_CITY)
+
+    console.print("\n[bold]Multi-city fare[/bold]")
+    cheapest = board_total(board)
+    if cheapest is not None:
+        console.print(f"  Cheapest entire-trip fare on this board: [bold]{cheapest:,.0f}[/bold]")
+    console.print("  Google prices the whole itinerary as one ticket here:")
+    # soft_wrap: rich breaks a long URL across three lines, and a URL broken
+    # across three lines cannot be copied out of a terminal.
+    console.print(f"  [cyan]{board.booking_url}[/cyan]", soft_wrap=True)
 
 
 def _research_legs(
@@ -238,6 +393,10 @@ def _research_legs(
     the cheapest-at-any-number-of-stops sum landed within a dollar of it. The
     URL printed at the end is what prices the real thing.
     """
+    console.print(
+        "\n[bold]Per-leg research[/bold] [dim](not a multi-city result: each leg "
+        "is searched as an independent one-way)[/dim]"
+    )
     search_client = SearchFlights()
     per_leg_cheapest: list[float | None] = []
 
@@ -257,7 +416,7 @@ def _research_legs(
         try:
             results = search_client.search(leg_filters)
         except SearchClientError as exc:
-            console.print(f"  [yellow]leg search failed: {exc}[/yellow]")
+            console.print(f"  [yellow]leg search failed: {escape(str(exc))}[/yellow]")
             per_leg_cheapest.append(None)
             continue
         if not results:
@@ -285,4 +444,5 @@ def _research_legs(
             "product from a single multi-city ticket — compare it, do not assume "
             "either is cheaper.[/dim]"
         )
-    console.print(f"  Google prices the whole itinerary as one ticket here:\n  [cyan]{url}[/cyan]")
+    console.print("  Google prices the whole itinerary as one ticket here:")
+    console.print(f"  [cyan]{url}[/cyan]", soft_wrap=True)

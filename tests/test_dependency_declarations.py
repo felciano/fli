@@ -31,6 +31,14 @@ PACKAGE_ROOT = PROJECT_ROOT / "fli"
 #: Modules that are never expected to come from a distribution requirement.
 IGNORED_MODULES = frozenset({"__future__", "fli"})
 
+#: Files allowed to import the optional ``browser`` extra. An explicit
+#: allow-list, not a glob or a directory: a stray ``import playwright``
+#: anywhere else must still fail the suite, and that containment is the whole
+#: maintenance posture ADR 001 committed to. The lazy imports inside
+#: ``_browser.py`` are still ``ast.ImportFrom`` nodes, so without this carve-out
+#: they read as undeclared runtime dependencies.
+BROWSER_ONLY_FILES = frozenset({"fli/search/_browser.py"})
+
 
 def _normalize(name: str) -> str:
     """Normalize a distribution name per PEP 503.
@@ -212,16 +220,19 @@ def test_dev_only_declarations_do_not_satisfy_runtime_imports():
 
 
 def test_core_imports_are_declared_in_runtime_dependencies():
-    """Modules imported outside ``fli/mcp/`` must be runtime dependencies."""
+    """Modules imported outside the extras' own files must be runtime deps."""
     runtime = _runtime_declared_names()
     undeclared: dict[str, set[str]] = {}
     for module, files in _third_party_modules().items():
-        core_files = {f for f in files if not f.startswith("fli/mcp/")}
+        core_files = {
+            f for f in files if not f.startswith("fli/mcp/") and f not in BROWSER_ONLY_FILES
+        }
         if core_files and not (_distributions_for(module) & runtime):
             undeclared[module] = core_files
 
     assert not undeclared, (
-        "Imported outside fli/mcp/ but not in [project.dependencies]:\n"
+        "Imported outside fli/mcp/ and the browser-only files but not in "
+        "[project.dependencies]:\n"
         + "\n".join(
             f"  {module}: imported by {', '.join(sorted(files))}"
             for module, files in sorted(undeclared.items())
@@ -249,3 +260,54 @@ def test_mcp_only_imports_are_declared_in_runtime_or_the_mcp_extra():
             for module, files in sorted(undeclared.items())
         )
     )
+
+
+def test_browser_only_imports_are_declared_in_runtime_or_the_browser_extra():
+    """Modules imported only by the browser-only files may live in that extra."""
+    project = _load_pyproject()["project"]
+    allowed = _runtime_declared_names() | _declared_names(
+        project.get("optional-dependencies", {}).get("browser", [])
+    )
+    undeclared: dict[str, set[str]] = {}
+    for module, files in _third_party_modules().items():
+        if files <= BROWSER_ONLY_FILES and not (_distributions_for(module) & allowed):
+            undeclared[module] = files
+
+    assert not undeclared, (
+        "Imported by a browser-only file but declared in neither dependencies "
+        "nor the browser extra:\n"
+        + "\n".join(
+            f"  {module}: imported by {', '.join(sorted(files))}"
+            for module, files in sorted(undeclared.items())
+        )
+    )
+
+
+def test_playwright_is_optional_only():
+    """``uv add flights`` must install no browser driver.
+
+    The whole bargain of ADR 001 is that the browser is opt-in. A default
+    install that pulls playwright would break it silently, so assert both
+    halves: present in the extra, absent from the runtime dependencies.
+    """
+    project = _load_pyproject()["project"]
+    browser_extra = _declared_names(project["optional-dependencies"]["browser"])
+    runtime = _runtime_declared_names()
+
+    assert "playwright" in browser_extra, (
+        "fli/search/_browser.py imports playwright; declare it in the browser extra"
+    )
+    assert "playwright" not in runtime, (
+        "playwright must never appear in [project.dependencies] — "
+        "`uv add flights` has to install without a browser"
+    )
+
+
+def test_browser_only_files_exist():
+    """The allow-list must not rot into a set of paths that no longer exist.
+
+    A renamed module would silently widen the carve-out back to nothing,
+    which looks like the guard passing rather than the guard being gone.
+    """
+    missing = [path for path in BROWSER_ONLY_FILES if not (PROJECT_ROOT / path).exists()]
+    assert not missing, f"BROWSER_ONLY_FILES names paths that do not exist: {missing}"

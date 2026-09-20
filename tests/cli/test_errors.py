@@ -320,3 +320,26 @@ class TestUnwritableLogDir:
         )
         assert result.exit_code != 0
         assert "Invalid leg format" in result.stdout + result.stderr
+
+
+class TestMarkupInErrorMessages:
+    """An error message is data, and rich reads square brackets as markup.
+
+    The browser transport's install advice is ``uv add "flights[browser]"``.
+    Printed unescaped it came out as ``uv add "flights"`` — the exact command
+    the user needs, minus the part that makes it the right command.
+    """
+
+    def test_bracketed_text_survives_to_the_screen(self, capsys, monkeypatch, tmp_path):
+        import typer
+
+        from fli.cli.errors import report_cli_error
+        from fli.search.exceptions import BrowserTransportUnavailableError
+
+        monkeypatch.setattr("fli.cli.errors._LOG_DIR", tmp_path / "logs")
+        exit_signal = report_cli_error(
+            BrowserTransportUnavailableError('run `uv add "flights[browser]"` first'),
+            command="multi",
+        )
+        assert isinstance(exit_signal, typer.Exit)
+        assert "flights[browser]" in capsys.readouterr().out.replace("\n", "")

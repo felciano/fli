@@ -1,10 +1,9 @@
 # 001 — Add an optional browser-backed transport for requests the HTTP transport cannot serve
 
-**Status:** Proposed. Blocked on the two unverified items in *Open risks* below —
-the shape of a multi-city `GetShoppingResults` response, and whether headless
-Chrome clears Google's attestation — and on the dependency question in
-*Consequences*, which is a maintainer call rather than a technical one.
-**Date:** 2026-09-18.
+**Status:** Accepted.
+**Date:** 2026-09-18, accepted 2026-09-20. See the *Addendum, 2026-09-20*
+at the end of this record for what was verified after acceptance — the
+reasoning above is left exactly as it was written.
 
 ---
 
@@ -357,3 +356,34 @@ Reopen this record if any of the following becomes true:
 - **Browser-driven traffic starts affecting the HTTP default path** — new
   challenges, blocks or friction on requests that used to succeed. The default
   path matters more than this one, and this one goes if it endangers it.
+
+---
+
+## Addendum, 2026-09-20 — what shipping it actually proved
+
+The maintainer accepted the browser dependency, and the transport plus both
+consumers were built. Appended rather than edited in, in the same style as the
+*Correction, twice over* section above: an accepted record's reasoning is not
+rewritten.
+
+### Accepted, 2026-09-20
+
+Both risks this record listed as blocking are closed, which is what made
+acceptance possible:
+
+- **Multi-city row shape** — `shape=known`. The committed nine-frame capture
+  decodes through the existing pipeline with no new decoder, though it needs a
+  merge rule: the frames are progressive re-sends of one growing board, so 83
+  raw rows are 11 itineraries and later frames revise prices *down*
+  (`BA239 3578 → 2976`).
+- **Headless attestation** — clears on a fresh, signed-out profile.
+
+One correction to this record's own reasoning, since it bears on scope rather
+than on progress: the search page serves an inline board only for itineraries
+Google reads as a round trip. Measured — `LHR→BOS, BOS→LHR` returns rows;
+`LHR→BOS, JFK→LHR` (a true open jaw) and `LHR→BOS, BOS→SFO` do not. An earlier
+reading of this as "two legs need no browser" was wrong: the open jaw, the
+commonest multi-city shape, does need one.
+
+Implementation progress is deliberately not recorded here, per
+`docs/decisions/README.md`: status describes the decision, not the work.

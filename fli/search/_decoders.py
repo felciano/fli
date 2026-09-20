@@ -37,6 +37,43 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def flight_rows(chunk: Any) -> list | None:
+    """Return the flight rows at the ``[2]``/``[3]`` positions of a payload.
+
+    Google puts the board in one or both of those slots, each a list whose
+    first element is the row array. The same layout serves the search page's
+    inlined ``ds:1`` payload and the ``GetShoppingResults`` RPC body, which is
+    why the browser transport can reuse this decoder untouched.
+
+    The ``None``-versus-``[]`` distinction is the whole point of this
+    function, and callers must keep it: **a slot that is present and empty
+    means Google found no itineraries; a slot that is absent means the
+    response shape changed.** Collapsing the two turns a wire-format
+    regression into a silent "no flights found".
+
+    Args:
+        chunk: One decoded payload — a ``wrb.fr`` chunk's inner JSON, or the
+            equivalent structure lifted out of the search page.
+
+    Returns:
+        Every row from whichever of the two slots carried one, concatenated
+        in slot order, or ``None`` when neither slot holds a row array.
+
+    """
+    if not isinstance(chunk, list):
+        return None
+    rows: list = []
+    found = False
+    for index in (2, 3):
+        if index >= len(chunk):
+            continue
+        slot = chunk[index]
+        if isinstance(slot, list) and slot and isinstance(slot[0], list):
+            rows.extend(slot[0])
+            found = True
+    return rows if found else None
+
+
 def parse_flight_row(row: list) -> FlightResult:
     """Decode a single flight row into a structured :class:`FlightResult`.
 

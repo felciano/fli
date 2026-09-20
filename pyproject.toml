@@ -44,8 +44,22 @@ mcp = [
     "pydantic-settings>=2.0.0",
     "uvicorn>=0.34.0",
 ]
+browser = [
+    # Playwright only. A fresh, signed-out Chrome for Testing profile clears
+    # Google's attestation unaided, so a stealth/fingerprint-spoofing helper
+    # would buy nothing and raise the arms-race stakes ADR 001 already counts
+    # as a cost. The floor is about uv.lock reproducibility, not features:
+    # connect_over_cdp, expect_response and launch_persistent_context are all
+    # long-stable.
+    "playwright>=1.48",
+]
 all = [
     "flights[mcp]",
+    # `all` means all. The install that must stay honest is the default one,
+    # `uv add flights`, and it still ships no browser. Note that the wheel is
+    # not the browser: `playwright install chromium` remains a separate step
+    # even under this extra.
+    "flights[browser]",
 ]
 dev = [
     "mkdocs-material[imaging]>=9.5.49",
@@ -79,6 +93,8 @@ build-backend = "hatchling.build"
 packages = ["fli"]
 
 [tool.pytest.ini_options]
+# NOTE: pytest.ini exists and takes precedence over this section, so this
+# is inert. Markers are registered in pytest.ini.
 markers = [
     "parallel: marks tests that can run in parallel"
 ]
@@ -126,6 +142,7 @@ ignore = ["D100", "D104", "D203", "D213"]
     "D101", # Missing docstring in public class
     "D102", # Missing docstring in public method
     "D103", # Missing docstring in public function
+    "D107", # Missing docstring in __init__ (test doubles are named, not documented)
 ]
 
 [tool.ruff.format]

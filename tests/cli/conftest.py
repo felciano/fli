@@ -136,3 +136,26 @@ def mock_console(monkeypatch):
     mock = MagicMock()
     monkeypatch.setattr("fli.cli.utils.console", mock)
     return mock
+
+
+@pytest.fixture(autouse=True)
+def no_accidental_browser(request, monkeypatch):
+    """Make the CLI tests incapable of starting a browser.
+
+    ``fli multi`` now decides for itself whether to fetch the real
+    multi-city board, and it decides on whether the ``browser`` extra is
+    installed. ``all`` includes that extra and ``make test`` runs
+    ``uv sync --all-extras``, so without this fixture the CLI tests would
+    behave one way in a bare checkout and another way on a developer's
+    machine — driving Chrome against Google for real in the second case.
+
+    A test that wants the board path asks for it with
+    ``@pytest.mark.usefixtures`` disabled or by patching
+    ``fli.cli.commands.multi.SearchMultiCity`` and ``browser_available``
+    itself; its own ``monkeypatch`` runs after this one and wins.
+    """
+    if request.node.get_closest_marker("wants_browser") is not None:
+        yield
+        return
+    monkeypatch.setattr("fli.cli.commands.multi.browser_available", lambda: False)
+    yield
