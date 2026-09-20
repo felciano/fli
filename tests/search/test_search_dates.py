@@ -330,11 +330,24 @@ class TestRoundTripDurationFallback:
         assert results and all(len(r.date) == 2 for r in results)
         # Outbound and return are 7 days apart in the fixture's segments.
         assert all((r.date[1] - r.date[0]).days == 7 for r in results)
-        tfs = urls[0].split("tfs=")[1].split("&")[0]
-        decoded = base64.urlsafe_b64decode(tfs + "=" * (-len(tfs) % 4)).decode("latin-1")
+        # One decoded tfs per URL the sweep actually requested. Deliberately
+        # not urls[0]: the sweep fans its dates out over a worker pool, so
+        # `urls` is in completion order while `results` is sorted, and
+        # pairing index 0 of each assumed a correspondence that does not
+        # exist. It held on this machine and failed on CI's 3.13 runner,
+        # where the threads finished in a different order.
+        decoded = [
+            base64.urlsafe_b64decode(
+                (tfs := url.split("tfs=")[1].split("&")[0]) + "=" * (-len(tfs) % 4)
+            ).decode("latin-1")
+            for url in urls
+        ]
         for r in results[:1]:
-            assert r.date[0].strftime("%Y-%m-%d") in decoded
-            assert r.date[1].strftime("%Y-%m-%d") in decoded
+            outbound = r.date[0].strftime("%Y-%m-%d")
+            back = r.date[1].strftime("%Y-%m-%d")
+            assert any(outbound in d and back in d for d in decoded), (
+                f"no request carried both {outbound} and {back}"
+            )
 
 
 def test_price_one_date_does_not_skip_utc_today_under_eastern_tz(
