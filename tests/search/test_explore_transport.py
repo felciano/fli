@@ -333,3 +333,66 @@ class TestFlexibleTripLength:
         """The flexible switches must not leak into the verified shapes."""
         one_way = self._tfs(explore_page_url(_verified_filters()))
         assert one_way == VERIFIED_TFS
+
+
+class TestFiltersThePageUrlCannotEncode:
+    """price_limit and max_duration are emulated; bags is named out loud.
+
+    All three used to be dropped in silence -- setting any of them produced
+    a byte-identical URL and an unfiltered board, so a caller asking for
+    fares under 200 got 1500-dollar ones with nothing to indicate why.
+    """
+
+    @pytest.fixture
+    def capture_calls(self, monkeypatch, captured_body):
+        def fake_capture(url, *, rpc_marker, options):
+            return RpcCapture(body=captured_body, rpc_urls=[], nudged=False)
+
+        import fli.search._browser as browser_module
+
+        monkeypatch.setattr(browser_module, "capture_rpc_body", fake_capture)
+        monkeypatch.setattr(browser_module, "browser_available", lambda: True)
+
+    def test_a_price_cap_is_honoured_and_keeps_unpriced_cards(self, capture_calls):
+        """The fixture holds 66 cards: 52 priced, 14 with no fare at all.
+
+        29 of the priced ones are at or under 150, so a 150 cap must leave
+        43. Keeping the unpriced is deliberate -- an unknown fare does not
+        violate a cap, and dropping them would quietly turn "under 150"
+        into "under 150, and only where Google quoted a price".
+        """
+        from fli.models.google_flights.base import PriceLimit
+
+        unfiltered = SearchExplore().search(_filters(), currency="USD")
+        capped = SearchExplore().search(
+            _filters(price_limit=PriceLimit(max_price=150)), currency="USD"
+        )
+        assert len(unfiltered.destinations) == 66
+        assert len(capped.destinations) == 43
+        priced = [d for d in capped.destinations if d.price is not None]
+        assert len(priced) == 29
+        assert all(d.price <= 150 for d in priced)
+        assert len([d for d in capped.destinations if d.price is None]) == 14
+
+    def test_a_duration_cap_is_honoured(self, capture_calls):
+        capped = SearchExplore().search(_filters(max_duration=200), currency="USD")
+        timed = [d for d in capped.destinations if d.duration_minutes is not None]
+        assert timed, "fixture must still yield timed cards"
+        assert all(d.duration_minutes <= 200 for d in timed)
+        assert len(capped.destinations) < 66, "a duration cap must remove something"
+
+    def test_no_caps_changes_nothing(self, capture_calls):
+        result = SearchExplore().search(_filters(), currency="USD")
+        assert len(result.destinations) == 66
+
+    def test_bags_is_named_rather_than_silently_dropped(self, capture_calls, caplog):
+        """It changes the fares Google quotes, so no local pass reproduces it."""
+        import logging
+
+        from fli.models.google_flights.base import BagsFilter
+
+        with caplog.at_level(logging.WARNING, logger="fli.search.explore"):
+            SearchExplore().search(
+                _filters(bags=BagsFilter(checked_bags=2, carry_on=True)), currency="USD"
+            )
+        assert any("bags" in r.getMessage() for r in caplog.records), caplog.text

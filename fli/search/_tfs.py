@@ -515,6 +515,55 @@ def unsupported_filters(filters: Any) -> list[str]:
     return named
 
 
+def apply_explore_filters(destinations: list[Any], filters: Any) -> list[Any]:
+    """Apply the Explore filters the page URL has no field for.
+
+    The sibling of :func:`apply_client_side_filters`, kept separate rather
+    than generalised: that one reads ``flight.legs`` and
+    ``filters.flight_segments``, and an Explore board has neither. A
+    destination card is one fare, not an itinerary.
+
+    ``price_limit`` and ``max_duration`` are emulated here because the
+    decoded cards carry ``price`` and ``duration_minutes``, so the filter
+    can be honoured exactly. As on the flights path, Google would have
+    filtered server-side and back-filled, so a filtered board is shorter
+    than an unfiltered one -- but everything on it matches.
+
+    **Unpriced and untimed cards are kept.** Google routinely returns
+    destinations with no fare, and ``ExploreDestination`` models that with
+    ``price=None`` and its own :attr:`~ExploreDestination.price_unknown`.
+    An unknown price does not violate a cap, and dropping those would
+    silently turn "under 200" into "under 200, and only where a fare was
+    quoted" -- a different search. This matches
+    :func:`apply_client_side_filters`, which keeps a ``None`` price too.
+
+    Args:
+        destinations: Decoded :class:`ExploreDestination` cards.
+        filters: The :class:`ExploreSearchFilters` they were fetched for.
+
+    Returns:
+        The cards that satisfy every emulable filter, in their original
+        order. The same list object is returned untouched when no such
+        filter is set.
+
+    """
+    max_duration = getattr(filters, "max_duration", None)
+    max_price = getattr(getattr(filters, "price_limit", None), "max_price", None)
+    if max_duration is None and max_price is None:
+        return destinations
+
+    out = []
+    for card in destinations:
+        duration = getattr(card, "duration_minutes", None)
+        if max_duration is not None and duration is not None and duration > max_duration:
+            continue
+        price = getattr(card, "price", None)
+        if max_price is not None and price is not None and price > max_price:
+            continue
+        out.append(card)
+    return out
+
+
 def apply_client_side_filters(flights: list[Any], filters: Any) -> list[Any]:
     """Apply the filters ``tfs`` has no field for, to already-decoded rows.
 

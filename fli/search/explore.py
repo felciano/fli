@@ -51,7 +51,7 @@ from fli.search._decoders import (
     parse_explore_destinations_chunk,
     parse_explore_prices_chunk,
 )
-from fli.search._tfs import explore_page_url
+from fli.search._tfs import apply_explore_filters, explore_page_url, unsupported_filters
 from fli.search._urls import with_locale_params
 from fli.search._wire import iter_wrb_chunks
 from fli.search.client import get_client
@@ -122,6 +122,19 @@ class SearchExplore:
             SearchRejectedError: Google declined the request.
 
         """
+        dropped = unsupported_filters(filters)
+        if dropped:
+            # `bags` is the one that reaches here: it changes the fares
+            # Google quotes rather than which destinations match, so no
+            # post-hoc pass can reproduce it. Named out loud for the same
+            # reason the flights path names its own -- a filter that is
+            # silently ignored is worse than one that is refused, and this
+            # path said nothing at all until now.
+            logger.warning(
+                "Filters not supported by the Explore transport, ignored: %s",
+                ", ".join(dropped),
+            )
+
         if transport is Transport.HTTP:
             body = self._fetch_over_http(filters, currency, language, country)
         else:
@@ -147,7 +160,13 @@ class SearchExplore:
             logger.warning("Explore search returned no parseable destination chunks")
             return None
 
-        return merge_explore_payloads(meta, destinations, prices)
+        result = merge_explore_payloads(meta, destinations, prices)
+        # price_limit and max_duration have no field in the page URL, but the
+        # decoded cards carry both numbers, so they are honoured here rather
+        # than dropped. Applied after the merge because an unpriced card only
+        # gets its fare from the prices payload.
+        result.destinations = apply_explore_filters(result.destinations, filters)
+        return result
 
     def _fetch_over_http(
         self,
