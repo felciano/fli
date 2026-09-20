@@ -55,7 +55,11 @@ from fli.search._tfs import apply_explore_filters, explore_page_url, unsupported
 from fli.search._urls import with_locale_params
 from fli.search._wire import iter_wrb_chunks
 from fli.search.client import get_client
-from fli.search.exceptions import BrowserTransportUnavailableError
+from fli.search.exceptions import (
+    BrowserAttestationRejectedError,
+    BrowserTransportUnavailableError,
+    SearchRejectedError,
+)
 from fli.search.transport import Transport
 
 logger = logging.getLogger(__name__)
@@ -135,10 +139,11 @@ class SearchExplore:
                 ", ".join(dropped),
             )
 
-        if transport is Transport.HTTP:
-            body = self._fetch_over_http(filters, currency, language, country)
-        else:
+        via_browser = transport is not Transport.HTTP
+        if via_browser:
             body = self._fetch_over_browser(filters, currency, language, country)
+        else:
+            body = self._fetch_over_http(filters, currency, language, country)
 
         # Destination and price records stream across MANY wrb.fr chunks in
         # no guaranteed order (24 chunks observed for large regions), so
@@ -146,15 +151,28 @@ class SearchExplore:
         meta: dict = {}
         destinations: list = []
         prices: dict = {}
-        for chunk in iter_wrb_chunks(body):
-            if is_explore_destinations_chunk(chunk):
-                chunk_meta, chunk_destinations = parse_explore_destinations_chunk(chunk)
-                for key, value in chunk_meta.items():
-                    if meta.get(key) is None:
-                        meta[key] = value
-                destinations.extend(chunk_destinations)
-            if is_explore_prices_chunk(chunk):
-                prices.update(parse_explore_prices_chunk(chunk, default_currency=currency))
+        try:
+            for chunk in iter_wrb_chunks(body):
+                if is_explore_destinations_chunk(chunk):
+                    chunk_meta, chunk_destinations = parse_explore_destinations_chunk(chunk)
+                    for key, value in chunk_meta.items():
+                        if meta.get(key) is None:
+                            meta[key] = value
+                    destinations.extend(chunk_destinations)
+                if is_explore_prices_chunk(chunk):
+                    prices.update(parse_explore_prices_chunk(chunk, default_currency=currency))
+        except SearchRejectedError as exc:
+            # ``iter_wrb_chunks`` raises this on a payload-less ``wrb.fr`` row
+            # carrying error 13, and its message explains the bgr gate: that a
+            # plain HTTP client cannot sign the header. True on the HTTP path,
+            # and false and misleading on the browser one, where the request
+            # *did* come from a real browser -- it sends the reader to #223 and
+            # the gate instead of to the actual cause. multi_city.py already
+            # re-diagnoses this; Explore did not, so the same rejection got
+            # opposite explanations depending on which search you called.
+            if not via_browser:
+                raise
+            raise self._attestation_error(exc) from exc
 
         if not destinations:
             logger.warning("Explore search returned no parseable destination chunks")
@@ -167,6 +185,35 @@ class SearchExplore:
         # gets its fare from the prices payload.
         result.destinations = apply_explore_filters(result.destinations, filters)
         return result
+
+    def _attestation_error(self, exc: SearchRejectedError) -> BrowserAttestationRejectedError:
+        """Re-diagnose a rejection that came back through a real browser.
+
+        The browser extra is imported here rather than at module scope so
+        that importing :mod:`fli.search.explore` still costs nothing on an
+        install without it -- the guarantee
+        ``tests/test_browser_extra_is_optional.py`` pins.
+
+        Args:
+            exc: The rejection ``iter_wrb_chunks`` raised.
+
+        Returns:
+            The browser-specific diagnosis, carrying the advice that
+            actually applies. Not raised here, so the caller keeps the
+            ``raise ... from exc`` chain visible at the call site.
+
+        """
+        from fli.search._browser import BrowserOptions
+
+        options = self._browser_options or BrowserOptions.from_env()
+        return BrowserAttestationRejectedError(
+            "Google declined the Explore request even though it came from a "
+            "real browser, so this is bot detection or a flagged profile "
+            "rather than the known bgr gate. Do not retry immediately. "
+            f"Delete the fli browser profile ({options.profile_dir}) to get a "
+            "fresh signed-out one, and if you are running headless try "
+            f"FLI_BROWSER_HEADLESS=0 — headless attestation is unverified. ({exc})"
+        )
 
     def _fetch_over_http(
         self,

@@ -9,6 +9,7 @@ existing parsers read an intercepted body **unchanged**.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -396,3 +397,53 @@ class TestFiltersThePageUrlCannotEncode:
                 _filters(bags=BagsFilter(checked_bags=2, carry_on=True)), currency="USD"
             )
         assert any("bags" in r.getMessage() for r in caplog.records), caplog.text
+
+
+def _rejected_wrb() -> bytes:
+    """Build a payload-less ``wrb.fr`` row with error 13 -- Google's refusal."""
+    row = json.dumps([["wrb.fr", None, None, None, None, [13]]], separators=(",", ":"))
+    return f")]}}'\n\n{len(row)}\n{row}".encode()
+
+
+class TestRejectionDiagnosis:
+    """The same refusal must not get opposite explanations by transport.
+
+    ``iter_wrb_chunks`` raises ``SearchRejectedError`` for a payload-less
+    row carrying error 13, and its message explains the bgr gate -- that a
+    plain HTTP client cannot sign the header. That is true on the HTTP
+    path and false on the browser one, where the request demonstrably did
+    come from a browser. multi_city.py already re-diagnosed it; Explore
+    did not, so it sent people to #223 and the gate instead of to bot
+    detection or a flagged profile.
+    """
+
+    def test_a_rejected_browser_is_bot_detection_not_the_bgr_gate(self, monkeypatch):
+        import fli.search._browser as browser_module
+        from fli.search.exceptions import BrowserAttestationRejectedError
+
+        def fake_capture(url, *, rpc_marker, options):
+            return RpcCapture(body=_rejected_wrb(), rpc_urls=[], nudged=False)
+
+        monkeypatch.setattr(browser_module, "capture_rpc_body", fake_capture)
+        monkeypatch.setattr(browser_module, "browser_available", lambda: True)
+
+        with pytest.raises(BrowserAttestationRejectedError) as excinfo:
+            SearchExplore().search(_filters())
+        message = str(excinfo.value)
+        assert "real browser" in message
+        assert "Do not retry" in message
+        assert "FLI_BROWSER_HEADLESS=0" in message
+        assert "bot detection or a flagged profile" in message
+        # The gate is named only to rule it out, and the original error is
+        # quoted at the end for diagnostics -- so "bgr" appearing is fine,
+        # but it must not arrive before the browser diagnosis that corrects it.
+        assert message.index("real browser") < message.index("bgr")
+
+    def test_the_http_path_keeps_the_gate_diagnosis(self, monkeypatch):
+        """There the bgr explanation is correct, and must survive."""
+        from fli.search.exceptions import BrowserAttestationRejectedError, SearchRejectedError
+
+        monkeypatch.setattr(SearchExplore, "_fetch_over_http", lambda *a, **k: _rejected_wrb())
+        with pytest.raises(SearchRejectedError) as excinfo:
+            SearchExplore().search(_filters(), transport=Transport.HTTP)
+        assert not isinstance(excinfo.value, BrowserAttestationRejectedError)
